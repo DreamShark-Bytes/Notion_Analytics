@@ -1,0 +1,4 @@
+notion-api @ git+https://github.com/DreamShark-Bytes/Notion_API.git@v1.0.1
+
+requests>=2.31.0
+tomli>=2.0.0; python_version < "3.11"

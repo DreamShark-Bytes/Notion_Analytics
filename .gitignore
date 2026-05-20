@@ -1,0 +1,15 @@
+.env
+*.db
+*.db-shm
+*.db-wal
+exports/
+__pycache__/
+*.py[cod]
+.venv/
+config.toml
+CLAUDE.md
+Notion_PowerBI-Session-History*.md
+/venv
+notion_powerbi.db
+exports/
+*.log

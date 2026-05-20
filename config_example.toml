@@ -1,0 +1,53 @@
+# Notion → Power BI Sync Configuration
+# Run: python sync.py
+
+# Your Notion integration token (Settings → Integrations → New integration)
+token = "ntn_your_token_here"
+
+# ── Database entries ──────────────────────────────────────────────────────────
+# Add one [[databases]] block per Notion database.
+
+[[databases]]
+id = "your-database-id-here"       # Notion database ID (from the URL)
+name = "tasks"                     # Table prefix in SQLite — no spaces, lowercase
+
+# Page body content (plain text, images/files skipped automatically)
+include_content = true
+
+# Page comments
+include_comments = true
+
+# Column filtering (Notion property names, case-sensitive)
+# Leave both empty to include all columns.
+include_columns = []               # If set, ONLY these columns are synced
+exclude_columns = []               # Columns to always skip
+
+# Change tracking
+track_changes = true
+change_fields = []                 # Empty = track all fields; or list specific names
+exclude_change_fields = []         # Fields to never track (e.g. noisy computed fields)
+
+# Column renames — declare these when you rename a property in Notion.
+# On the next sync, data is migrated from the old column to the new one
+# and change history is updated to use the new name.
+# Remove the entry after the first successful sync.
+column_renames = {}
+# column_renames = {"Old Property Name" = "New Property Name"}
+
+# Add more databases below:
+# [[databases]]
+# id = "another-database-id"
+# name = "projects"
+# include_content = false
+# include_comments = true
+# exclude_columns = ["Internal Notes"]
+# track_changes = true
+# exclude_change_fields = ["Last Edited (Bot)"]
+# column_renames = {}
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+[output]
+db_path = "notion_powerbi.db"      # SQLite database file
+export_csv = false                 # Also write CSV files alongside SQLite
+csv_dir = "exports"
