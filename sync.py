@@ -176,7 +176,7 @@ def main():
 
     databases = cfg.get("databases", [])
     if not databases:
-        logger.error("No databases configured in config.yaml")
+        logger.error("No databases configured in config.toml")
         sys.exit(1)
 
     client = NotionClient(token)

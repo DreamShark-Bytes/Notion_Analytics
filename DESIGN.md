@@ -1,6 +1,28 @@
-# Notion PowerBI — Design
+# Notion Analytics — Design
 
 Settled architecture and decisions. Updated only when a decision is finalized and will not be revisited.
+
+---
+
+## Deployment Architecture
+
+Production host: Windows machine (ThinkPad) running both the sync and the gateway.
+
+```
+Task Scheduler
+    └─ runs sync.py on a schedule (e.g. hourly)
+            └─ writes notion_analytics.db (local SQLite)
+
+On-Premises Data Gateway (personal mode, background service)
+    └─ bridges Power BI Service to local notion_analytics.db via ODBC
+            └─ Power BI Service scheduled refresh reads through gateway
+                    └─ cloud dataset updated automatically
+                            └─ iPad / PC read from cloud — no manual step
+```
+
+Linux alternative: Grafana reads the SQLite file directly as a service — no gateway needed. Both paths are documented in the README and remain supported.
+
+**Constraint:** the Windows host must be on and the gateway service running when a Power BI Service scheduled refresh fires.
 
 ---
 
@@ -8,13 +30,13 @@ Settled architecture and decisions. Updated only when a decision is finalized an
 
 Four modules:
 
-| Module | Role |
-|---|---|
-| `sync.py` | Entry point. Loads config, drives per-database sync loop, handles CSV export. |
-| `extractor.py` | Converts raw Notion API page dicts into flat `{col: value}` dicts ready for SQLite. |
-| `storage.py` | SQLite persistence. Auto-evolves schema as new Notion columns appear. |
-| `change_tracker.py` | Compares new row against stored snapshot; emits field-level change records. |
-| `notion_api.py` | Shared library (Notion_API project, pinned via requirements.txt). |
+| Module              | Role                                                                                |
+| ---------------------| -------------------------------------------------------------------------------------|
+| `sync.py`           | Entry point. Loads config, drives per-database sync loop, handles CSV export.       |
+| `extractor.py`      | Converts raw Notion API page dicts into flat `{col: value}` dicts ready for SQLite. |
+| `storage.py`        | SQLite persistence. Auto-evolves schema as new Notion columns appear.               |
+| `change_tracker.py` | Compares new row against stored snapshot; emits field-level change records.         |
+| `notion_api.py`     | Shared library (Notion_API project, pinned via requirements.txt).                   |
 
 ---
 
@@ -32,11 +54,11 @@ WAL mode enabled (`PRAGMA journal_mode=WAL`) for concurrent read access while sy
 
 Per configured database (example prefix: `tasks`):
 
-| Table | Description |
-|---|---|
-| `{name}_pages` | Current state — one row per Notion page, one column per property |
-| `{name}_changes` | Field-level change history — one row per detected change |
-| `{name}_comments` | Page comments (optional, per-database flag) |
+| Table             | Description                                                      |
+| -------------------| ------------------------------------------------------------------|
+| `{name}_pages`    | Current state — one row per Notion page, one column per property |
+| `{name}_changes`  | Field-level change history — one row per detected change         |
+| `{name}_comments` | Page comments (optional, per-database flag)                      |
 
 ### `{name}_pages` fixed columns
 
@@ -107,18 +129,18 @@ Pinned in `requirements.txt` to a specific git tag:
 notion-api @ git+https://github.com/DreamShark-Bytes/Notion_API.git@v1.0.1
 ```
 
-| Notion PowerBI | Notion API |
-|---|---|
-| v1.x | v1.x |
+| Notion PowerBI | [Notion API](https://github.com/DreamShark-Bytes/Notion_API) |
+| ----------------| --------------------------------------------------------------|
+| v1.x           | v1.x                                                         |
 
 ---
 
 ## Decision Log
 
-| Decision | Rationale |
-|---|---|
-| SQLite over a dedicated Notion database for storage | No API overhead on reads; portable; Power BI connects natively via ODBC |
+| Decision                                                | Rationale                                                                                                |
+| ---------------------------------------------------------| ----------------------------------------------------------------------------------------------------------|
+| SQLite over a dedicated Notion database for storage     | No API overhead on reads; portable; Power BI connects natively via ODBC                                  |
 | Change tracking in the sync tool (not Notion_Automator) | PowerBI owns its own history; Automator's change tracking (if implemented) is separate and complementary |
-| Per-field change tracking (not just last_edited_time) | last_edited_time changes on any edit; field-level tracking is what makes trend analysis possible |
-| `include_content` off by default for non-task DBs | Page content is large and noisy; not needed for most KPI calculations |
-| No write-back to Notion from this project | This project is read-only. Bulk edits to Notion belong in Notion_Automator's tools/ folder. |
+| Per-field change tracking (not just last_edited_time)   | last_edited_time changes on any edit; field-level tracking is what makes trend analysis possible         |
+| `include_content` off by default for non-task DBs       | Page content is large and noisy; not needed for most KPI calculations                                    |
+| No write-back to Notion from this project               | This project is read-only. Bulk edits to Notion belong in Notion_Automator's tools/ folder.              |

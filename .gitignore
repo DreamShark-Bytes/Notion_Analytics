@@ -8,8 +8,8 @@ __pycache__/
 .venv/
 config.toml
 CLAUDE.md
-Notion_PowerBI-Session-History*.md
+STATUS.md
+scratch.md
+Notion_Analytics-Session-History*.md
 /venv
-notion_powerbi.db
-exports/
 *.log
