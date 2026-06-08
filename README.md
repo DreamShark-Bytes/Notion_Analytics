@@ -1,38 +1,63 @@
-# Notion → Power BI Sync
+# Notion Analytics
 
-Pulls Notion databases into a local SQLite file for Power BI Import mode.
-Run it on a schedule; Power BI refreshes from the SQLite file (or optional CSV exports).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
----
+Notion is built for managing information, not analyzing it. Notion Analytics pulls your Notion databases into a local SQLite file on a schedule, enabling dashboards in Power BI or Grafana — with a full field-level change history so you can see exactly how your data evolved over time.
 
-## Related Projects
+## Architecture
 
-- **[Notion_API](https://github.com/DreamShark-Bytes/Notion_API)** — shared Notion API client used by this project (pinned via `requirements.txt`)
-- **[Notion_Automator](https://github.com/DreamShark-Bytes/Notion_Automator)** — companion daemon that writes automation logic back to Notion (recurring tasks, closed date stamping, etc.); this project reads what that one writes
-
----
-
-## Prerequisites
-
-- Python 3.11+
-- A Notion integration with read access to your databases
-- Power BI Desktop (Windows) — or Power BI Service with a gateway
-
----
-
-## Setup
-
-### 1. Clone / copy the project
-
-```bash
-cd ~/Documents
-# project is already at Notion_Analytics/
-cd Notion_Analytics
+```mermaid
+flowchart LR
+    N[("Notion\nDatabases")] -->|Notion API| S["sync.py<br>Windows->Task Scheduler<br>Linux->cron"]
+    S --> DB[("notion_analytics.db<br>SQLite")]
+    DB -->|ODBC| PB["Power BI<br>(Windows only)"]
+    DB -->|SQLite plugin| G["Grafana"]
 ```
 
-### 2. Install dependencies
+## Features
+
+- **Scheduled sync** — runs via Task Scheduler (Windows) or cron / systemd (Linux)
+- **Field-level change tracking** — every property change recorded with timestamps; full history of how your data evolved
+- **Auto-schema evolution** — new Notion columns appear automatically on the next sync, no manual migration
+- **Content and comment sync** — page body and comments captured as plain text
+- **Property rename support** — declare a rename in config, change history migrated automatically
+- **CSV export** — optional alongside SQLite
+- **Cross-platform** — Windows and Linux both supported
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Setup](#setup)
+  - [Full Setup](#full-setup)
+  - [Running the Sync](#running-the-sync)
+  - [Scheduling](#scheduling)
+  - [Connecting to Power BI](#connecting-to-power-bi)
+  - [Connecting to Grafana](#connecting-to-grafana)
+  - [Verifying the Database](#verifying-the-database)
+- [Guide](#guide)
+  - [Change Tracking](#change-tracking)
+  - [Content Sync](#content-sync)
+  - [Usage Tips](#usage-tips)
+- [Reference](#reference)
+  - [SQLite Table Structure](#sqlite-table-structure)
+  - [Property Types](#property-types)
+  - [Handling Schema Changes](#handling-schema-changes)
+  - [Resetting the Database](#resetting-the-database)
+- [Updating](#updating)
+- [Troubleshooting](#troubleshooting)
+- [Known Limitations](#known-limitations)
+- [Planned Features](#planned-features)
+- [Dependencies & Related Projects](#dependencies--related-projects)
+- [License](#license)
+- [Credits](#credits)
+
+---
+
+## Quick Start
 
 ```bash
+git clone https://github.com/DreamShark-Bytes/Notion_Analytics.git
+cd Notion_Analytics
 python -m venv venv
 
 # Linux / macOS
@@ -42,28 +67,48 @@ venv/bin/pip install -r requirements.txt
 venv\Scripts\pip install -r requirements.txt
 ```
 
-### 3. Create your Notion integration
+Copy and configure:
+
+```bash
+cp config_example.toml config.toml
+# Edit config.toml: add your Notion token and at least one database ID
+```
+
+Run:
+
+```bash
+venv/bin/python sync.py     # Linux / macOS
+venv\Scripts\python sync.py    # Windows
+```
+
+Your data is now in `notion_analytics.db`. Open it in [DB Browser for SQLite](https://sqlitebrowser.org/) to verify, then connect Power BI or Grafana.
+
+---
+
+## Setup
+
+### Full Setup
+
+#### 1. Create your Notion integration
 
 1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations)
 2. Click **New integration**, give it a name, select your workspace
 3. Copy the **Internal Integration Secret**
 4. For each database you want to sync: open the database in Notion → `...` menu → **Connect to** → select your integration
 
-### 4. Configure
-
-Copy the example config:
+#### 2. Configure
 
 ```bash
 cp config_example.toml config.toml
 ```
 
-Edit `config.toml` — add your Notion integration token and configure each database you want to sync. Find each database ID in its Notion URL: `https://notion.so/workspace/**{database-id}**?v=...`
+Find each database ID in its Notion URL: `https://notion.so/workspace/**{database-id}**?v=...`
 
 ```toml
 token = "ntn_your_token_here"
 
 [[databases]]
-id = "your-database-id-here"  # database ID from the URL
+id = "your-database-id-here"
 name = "tasks"                # table prefix in SQLite — no spaces, lowercase
 include_content = true        # include page body as plain text
 include_comments = true       # include page comments
@@ -72,79 +117,50 @@ track_changes = true          # record field-level change history
 
 See `config_example.toml` for all available options.
 
----
-
-## Running the sync
+### Running the Sync
 
 ```bash
-# One-shot sync — uses config.toml in the current directory
-# Linux / macOS
-venv/bin/python sync.py
-# Windows
-venv\Scripts\python sync.py
+# One-shot sync
+venv/bin/python sync.py                               # Linux
+venv\Scripts\python sync.py                           # Windows
 
-# Use a different config file (e.g. for test vs production)
-venv/bin/python sync.py --config config_test.toml   # Linux
-venv\Scripts\python sync.py --config config_test.toml  # Windows
+# Use a different config file
+venv/bin/python sync.py --config config_test.toml
 
-# Full refresh — re-fetches all pages, useful after config changes
-venv/bin/python sync.py --full   # Linux
-venv\Scripts\python sync.py --full  # Windows
+# Full refresh — re-fetches all pages (useful after config changes)
+venv/bin/python sync.py --full
 ```
 
-Output is written to `notion_analytics.db` (SQLite) and optionally to `exports/` as CSV files.
-A log is written to `notion_analytics.log`.
+Output: `notion_analytics.db` (SQLite), optionally `exports/` (CSV), log at `notion_analytics.log`.
 
----
+### Scheduling
 
-## Verifying the database
+#### Windows — Task Scheduler
 
-After the first sync, confirm the tables were created and populated.
+1. Open **Task Scheduler** → **Create Task** (not "Create Basic Task")
+2. **General tab:** Name: `Notion Analytics Sync` · Description: `Syncs Notion databases to a local SQLite file for use with Power BI and Grafana.`
+3. **Triggers tab:** New → On a schedule → Daily → check **Repeat task every: 1 hour** for duration **Indefinitely**
+4. **Actions tab:** New → Start a program
+   - **Program/script:** `C:\Users\YourName\Documents\Notion_Analytics\venv\Scripts\python.exe`
+   - **Add arguments:** `sync.py`
+   - **Start in:** `C:\Users\YourName\Documents\Notion_Analytics`
+5. **Conditions tab:** uncheck "Start the task only if the computer is on AC power" if on battery
+6. **Settings tab:** check "If the task is already running, do not start a new instance"
+7. Click OK → right-click the task → **Run** once → check `notion_analytics.log`
 
-**Install sqlite3 if needed:**
-```bash
-# Linux
-sudo apt install sqlite3
-
-# macOS
-brew install sqlite
-```
-Windows: sqlite3 is included with [DB Browser for SQLite](https://sqlitebrowser.org/) — see below.
-
-**Quick checks:**
-```bash
-# List all tables
-sqlite3 notion_analytics.db ".tables"
-
-# Row counts
-sqlite3 notion_analytics.db "SELECT COUNT(*) FROM tasks_pages;"
-sqlite3 notion_analytics.db "SELECT COUNT(*) FROM tasks_changes;"
-
-# Peek at a few rows
-sqlite3 notion_analytics.db "SELECT page_id, last_edited_time FROM tasks_pages LIMIT 5;"
-```
-
-You should see one `_pages`, `_changes`, and (if enabled) `_comments` table per configured database. Rows in `_changes` with `old_value = NULL` are the initial state records from the first sync — that's expected.
-
-**GUI alternative:** [DB Browser for SQLite](https://sqlitebrowser.org/) (free, Windows/Mac/Linux) lets you browse tables and run queries visually. Useful for exploring the data before connecting Power BI.
-
----
-
-## Scheduling the sync
-
-### Linux — cron
+#### Linux — cron
 
 ```bash
 crontab -e
 ```
 
-Add a line (runs every hour; adjust as needed):
+Add (runs every hour):
 
 ```
 0 * * * * cd /home/vince/Documents/Notion_Analytics && /home/vince/Documents/Notion_Analytics/venv/bin/python sync.py >> notion_analytics.log 2>&1
 ```
 
-### Linux — systemd timer (recommended for a server)
+#### Linux — systemd timer
 
 Create `/etc/systemd/system/notion-analytics.service`:
 
@@ -173,131 +189,105 @@ OnUnitActiveSec=1h
 WantedBy=timers.target
 ```
 
-Enable:
-
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now notion-analytics.timer
-sudo systemctl status notion-analytics.timer
 ```
 
-### Windows — Task Scheduler
+### Connecting to Power BI
 
-1. Open **Task Scheduler** (search "Task Scheduler" in Start)
-2. Click **Create Basic Task** → give it a name (e.g. `Notion Analytics Sync`)
-3. **Trigger:** Daily → set a start time → check **Repeat task every: 1 hour** → **for a duration of: Indefinitely**
-4. **Action:** Start a program
-   - **Program/script:** full path to the venv Python, e.g. `C:\Users\YourName\Documents\Notion_Analytics\venv\Scripts\python.exe`
-   - **Add arguments:** `sync.py`
-   - **Start in:** full path to the project folder, e.g. `C:\Users\YourName\Documents\Notion_Analytics`
-5. Finish → right-click the task → **Run** once to verify
-6. Check `notion_analytics.log` to confirm it ran successfully
+#### Step 1 — Install the SQLite ODBC driver
 
-> **Note:** Task Scheduler runs even when no user is logged in, but the machine must be on. In task Properties → Conditions, uncheck "Start the task only if the computer is on AC power" if you want it to run on battery.
+Download and install the [SQLite ODBC driver](http://www.ch-werner.de/sqliteodbc/) (`sqliteodbc_w64.exe` for 64-bit Windows).
 
----
+#### Step 2 — Create a DSN and connect Power BI Desktop
 
-## Connecting on Linux — Grafana
+1. Open **ODBC Data Sources (64-bit)** — use the 64-bit version (search "ODBC" in Start)
+2. **System DSN** tab → **Add** → select **SQLite3 ODBC Driver**
+3. Name the DSN (e.g. `NotionAnalytics`) and set the database path to your `notion_analytics.db` file
+4. In Power BI Desktop → **Get Data** → **ODBC** → select your DSN → load the tables
 
-[Grafana](https://grafana.com/) is a free, open-source dashboarding tool that runs natively on Linux and connects directly to SQLite. It is the recommended option if you are running the sync on a Linux machine without a Windows host available.
+> **Tip:** Set the **Data Category** of the `url` column to **Web URL** in Power BI to make Notion page links clickable in reports.
 
-**Setup:**
+**Alternative — CSV export (no driver needed)**
 
-1. Install Grafana: https://grafana.com/docs/grafana/latest/setup-grafana/installation/debian/
+Set `export_csv = true` under `[output]` in `config.toml`. After each sync, CSV files appear in `exports/`. In Power BI Desktop → **Get Data** → **Text/CSV**.
+
+#### Step 3 — Remote access
+
+**Option A — Remote Desktop (RDP):** Enable Remote Desktop on your Windows machine and connect via Microsoft Remote Desktop (iOS/Android). [Tailscale](https://tailscale.com/) (free personal tier) makes the machine reachable from anywhere without port forwarding.
+
+**Option B — Power BI Service:** Publish reports to the cloud and view them in Power BI Mobile. Requires a work or school Microsoft account — personal accounts are not supported. If you have one, sign in to Power BI Desktop → **File → Publish → Publish to Power BI**. For automatic cloud refresh without manually republishing, install the [On-Premises Data Gateway](https://powerbi.microsoft.com/en-us/gateway/) (Personal mode, free) on the same machine.
+
+### Connecting to Grafana
+
+[Grafana](https://grafana.com/oss/grafana/) (free, open-source) is a cross-platform alternative to Power BI that connects directly to SQLite.
+
+1. Install Grafana: [grafana.com/docs/grafana/latest/setup-grafana/installation/](https://grafana.com/docs/grafana/latest/setup-grafana/installation/)
 2. Install the SQLite plugin: **Administration → Plugins** → search `SQLite` → install
-3. Add a data source: **Connections → Data sources → Add → SQLite** → set the database path to your `notion_analytics.db` file
-4. Build dashboards using SQL queries against the `_pages`, `_changes`, and `_comments` tables
+3. Add a data source: **Connections → Data sources → Add → SQLite** → set the path to your `notion_analytics.db`
+4. Build dashboards with SQL queries against `_pages`, `_changes`, and `_comments` tables
 
-Grafana runs as a service and is accessible from any browser on your network — no desktop app required.
+Grafana runs as a service and is accessible from any browser — reachable remotely via [Tailscale](https://tailscale.com/) without port forwarding.
+
+### Verifying the Database
+
+After the first sync:
+
+```bash
+# Linux / macOS
+sqlite3 notion_analytics.db ".tables"
+sqlite3 notion_analytics.db "SELECT COUNT(*) FROM tasks_pages;"
+sqlite3 notion_analytics.db "SELECT COUNT(*) FROM tasks_changes;"
+```
+
+Windows: [DB Browser for SQLite](https://sqlitebrowser.org/) (free) lets you browse tables and run queries visually.
+
+Rows in `_changes` with `old_value = NULL` are initial state records from the first sync — that's expected.
 
 ---
 
-## Connecting to Power BI
+## Guide
 
-### Step 1 — Get the database file onto your Windows machine
+### Change Tracking
 
-The sync produces `notion_analytics.db` wherever you run it. Power BI Desktop needs to reach that file from Windows.
+When `track_changes = true` is set for a database, every property change is recorded in the `{name}_changes` table with a timestamp.
 
-**Option A — Run the sync on your Windows PC directly (simplest)**
-Python runs on Windows. Clone the repo, install dependencies, configure `config.toml`, and run `python sync.py` from a Windows terminal. The `.db` file is local and Power BI can read it directly.
+**Initial state:** On the first sync of any page, all tracked fields are written as initial records — `old_value = NULL`, `new_value` = current value, `valid_from` = the page's `created_time`. This gives you a baseline for every field from the moment Notion created the page, not just from when you started syncing.
 
-**Option B — Samba network share (if sync runs on a Linux server/Pi)**
-Set up a Samba share on the Linux machine, map it as a network drive on Windows, and point Power BI at the network path. The sync keeps running on the server; Power BI reads the file over the network.
+**Subsequent syncs:** Only fields whose values have changed since the last sync are recorded. Unchanged fields produce no entry.
 
-### Step 2 — Connect Power BI Desktop
+**Fields always excluded from tracking** (too noisy or redundant):
 
-**Option A — SQLite ODBC driver (recommended)**
-
-1. Download and install the [SQLite ODBC driver](http://www.ch-werner.de/sqliteodbc/) on Windows
-2. Open **ODBC Data Sources (64-bit)** → **System DSN** → **Add** → select `SQLite3 ODBC Driver`
-3. Give the DSN a name (e.g. `NotionPowerBI`) and set the database path to your `notion_analytics.db` file
-4. In Power BI Desktop → **Get Data** → **ODBC** → select your DSN → load the tables you want
-
-**Option B — CSV export (no driver install needed)**
-
-In `config.toml`, set `export_csv = true` under `[output]`. After each sync, CSV files appear in `exports/`. In Power BI Desktop → **Get Data** → **Text/CSV** → point at the files. Repeat when data changes.
-
-### Step 3 — View reports on iPad
-
-Power BI Mobile (iOS) lets you view any report you've published to Power BI Service.
-
-1. Create a free Microsoft / Power BI account at [app.powerbi.com](https://app.powerbi.com)
-2. In Power BI Desktop: sign in with that account → **File → Publish → Publish to Power BI** → choose **My workspace**
-3. On iPad: install **Microsoft Power BI** (free on the App Store) → sign in with the same account → your reports appear automatically
-
-**Refresh on iPad:** the published report is a snapshot from when you last published. To update it, run the sync, open the report in Power BI Desktop, and publish again. (Automatic cloud refresh requires an On-Premises Data Gateway — see below if you want that later.)
-
-### Optional — On-Premises Data Gateway (automatic cloud refresh)
-
-Without a gateway, refreshing the cloud dataset requires opening Power BI Desktop and manually republishing. With the gateway, Power BI Service can pull fresh data from your local `.db` file on a schedule — no human step needed.
-
-**How the full automated pipeline works:**
-
-```
-Task Scheduler → sync.py → notion_analytics.db (local)
-                                    ↑
-         On-Premises Data Gateway ──┘ (running on same machine)
-                    ↓
-         Power BI Service scheduled refresh → cloud dataset updated
-                    ↓
-         iPad / PC read from cloud — always current
-```
-
-**Setup:**
-
-1. Download and install the [Power BI On-Premises Data Gateway](https://powerbi.microsoft.com/en-us/gateway/) — choose **Personal mode** (free; no Pro license required for My Workspace)
-2. During setup, sign in with the **same Microsoft account** you use for Power BI Service
-3. The gateway runs as a Windows background service — it starts automatically on boot
-4. In [Power BI Service](https://app.powerbi.com): open your dataset → **Settings** → **Gateway and cloud connections** → map the SQLite ODBC data source to your gateway
-5. Under **Scheduled refresh**: enable it and set your preferred frequency (e.g. hourly)
-6. Power BI Service will now refresh the dataset automatically whenever the gateway is reachable
-
-> **Constraint:** The ThinkPad must be on and the gateway service running when a scheduled refresh fires. If the machine is off, that refresh cycle is skipped — the next scheduled refresh will catch up.
-
----
-
-## SQLite table structure
-
-For each configured database (example name: `tasks`):
-
-| Table | Description |
+| Field | Reason |
 |---|---|
-| `tasks_pages` | Current state — one row per Notion page, one column per property |
-| `tasks_changes` | Field-level change history |
-| `tasks_comments` | Page comments |
+| `last_edited_time` | Changes on every sync |
+| `content_text` | Large and noisy |
+| `url` | Never changes |
 
-### `tasks_pages` columns
+**Controlling which fields are tracked:**
 
-| Column | Type | Notes |
-|---|---|---|
-| `page_id` | TEXT (PK) | Notion page ID |
-| `created_time` | TEXT | ISO 8601 |
-| `last_edited_time` | TEXT | ISO 8601 |
-| `url` | TEXT | Notion page URL — set column Data Category to **Web URL** in Power BI to make it a clickable link |
-| `content_text` | TEXT | Page body as plain text (if enabled) — see below for block type handling |
-| *(property columns)* | varies | One column per Notion property, sanitized to lowercase_with_underscores |
+```toml
+[[databases]]
+name = "tasks"
+track_changes = true
 
-**`content_text` block handling:**
+# Track only these fields (allowlist):
+change_fields = ["Status", "Due Date", "Assignee"]
+
+# Or track everything except these (denylist):
+exclude_change_fields = ["Notes", "Description"]
+```
+
+`change_fields` and `exclude_change_fields` use original Notion property names (not sanitized column names). If both are set, `change_fields` takes precedence.
+
+### Content Sync
+
+When `include_content = true` is set for a database, the full body of each Notion page is captured as plain text in the `content_text` column.
+
+> **Performance note:** Content requires a separate API call per page. For large databases (hundreds of pages), this significantly increases sync time. Set `include_content = false` for databases where the body text is not needed.
+
+Block types are converted to plain text as follows:
 
 | Block type | Stored as |
 |---|---|
@@ -309,12 +299,77 @@ For each configured database (example name: `tasks`):
 | Code | `[code:language] text` |
 | Table | Pipe-separated rows: `cell1 \| cell2 \| cell3` |
 | Child page / inline database | `[child_page: Title]` or `[child_database: Title]` — not recursed into |
-| Images, video, audio, PDF | `[image: caption]`, `[video]`, `[audio]`, `[pdf]` — caption included if present |
+| Images, video, audio, PDF | `[image: caption]`, `[video]`, `[audio]`, `[pdf]` |
 | File attachments | `[file: filename]` |
 | Bookmark, embed, link preview | `[bookmark: url]`, `[embed: url]`, `[link_preview: url]` |
-| Unsupported blocks | `[unsupported]` |
+| Unsupported | `[unsupported]` |
 
-### `tasks_changes` columns
+### Usage Tips
+
+**Use separate configs for testing**
+
+Keep a `config_test.toml` with a different `db_path` so test runs never touch production data:
+
+```toml
+# config_test.toml
+[output]
+db_path = "notion_analytics_test.db"
+```
+
+```bash
+venv/bin/python sync.py --config config_test.toml
+```
+
+**Limit which columns are synced**
+
+Use `include_columns` to sync only the fields you need. Reduces table width and sync time for wide databases:
+
+```toml
+[[databases]]
+name = "tasks"
+include_columns = ["Name", "Status", "Due Date", "Assignee"]
+```
+
+**Apply a property rename before the next sync**
+
+Add `column_renames` to `config.toml` before the next scheduled sync runs. If the sync runs first without it, the old column stops updating and the new column starts fresh — you lose the connection between them. See [Handling Schema Changes](#handling-schema-changes).
+
+**CSV export for simple consumers**
+
+```toml
+[output]
+export_csv = true
+csv_dir = "exports"   # default
+```
+
+CSV files are written alongside the SQLite file after each sync. Useful for sharing snapshots or loading into tools that don't support SQLite directly.
+
+---
+
+## Reference
+
+### SQLite Table Structure
+
+For each configured database (example: `tasks`):
+
+| Table | Description |
+|---|---|
+| `tasks_pages` | Current state — one row per Notion page |
+| `tasks_changes` | Field-level change history |
+| `tasks_comments` | Page comments (if enabled) |
+
+#### `tasks_pages` columns
+
+| Column | Type | Notes |
+|---|---|---|
+| `page_id` | TEXT (PK) | Notion page ID |
+| `created_time` | TEXT | ISO 8601 |
+| `last_edited_time` | TEXT | ISO 8601 |
+| `url` | TEXT | Notion page URL |
+| `content_text` | TEXT | Page body as plain text (if enabled) |
+| *(property columns)* | varies | One column per Notion property, sanitized to `lowercase_with_underscores` |
+
+#### `tasks_changes` columns
 
 | Column | Notes |
 |---|---|
@@ -322,10 +377,10 @@ For each configured database (example name: `tasks`):
 | `field` | Sanitized column name |
 | `old_value` | Previous value (NULL for initial record) |
 | `new_value` | New value |
-| `valid_from` | When the value took effect (page `created_time` for initial records, detection time for subsequent changes) |
+| `valid_from` | When the value took effect (page `created_time` for initial records, detection time for changes) |
 | `detected_at` | When this sync run detected the change |
 
-### `tasks_comments` columns
+#### `tasks_comments` columns
 
 | Column | Notes |
 |---|---|
@@ -335,33 +390,7 @@ For each configured database (example name: `tasks`):
 | `last_edited_time` | ISO 8601 |
 | `text` | Comment body as plain text |
 
----
-
-## Handling Notion schema changes
-
-### Renamed property
-
-1. In `config.toml`, add the rename under the affected database:
-
-```toml
-column_renames = {"Old Property Name" = "New Property Name"}
-```
-
-2. Run `venv/bin/python sync.py` — data and change history are migrated automatically.
-3. Remove the `column_renames` entry (it's safe to leave, but cleaner without).
-
-### New property
-
-No action needed — new columns are added to SQLite automatically on the next sync.
-
-### Deleted property
-
-The column remains in SQLite with its historical data but stops being updated.
-No data is lost.
-
----
-
-## Notes on property types
+### Property Types
 
 | Notion type | Stored as |
 |---|---|
@@ -370,65 +399,164 @@ No data is lost.
 | Select, Status | Option name string |
 | Multi-select | Comma-separated names |
 | Date | ISO string; date ranges as `start/end` |
-| Checkbox | 1 / 0 |
-| Formula | Computed result (not the formula expression — API limitation) |
+| Checkbox | INTEGER (1 / 0) |
+| Formula | Computed result (API returns the evaluated value, not the formula) |
 | Relation | Comma-separated related page IDs |
-| Rollup | Number (count for arrays), date start, or number |
+| Rollup | Number (count), date start, or number |
 | People | Comma-separated names |
-| Files / Images | `True`/`False` (default) — or raw file objects, or excluded; controlled by `files_handling` parameter on `extract_page_row` |
+| Files / Images | `True`/`False` by default; controlled by `files_handling` in `extract_page_row` |
 | Created by / Last edited by | **Excluded** |
+
+### Handling Schema Changes
+
+#### Renamed property
+
+1. Add the rename to `config.toml` under the affected database before the next sync runs:
+
+```toml
+column_renames = {"Old Property Name" = "New Property Name"}
+```
+
+2. Run the sync — data and change history are migrated automatically.
+3. Remove the entry once done (safe to leave, but cleaner without).
+
+#### New property
+
+No action needed — new columns are added automatically on the next sync.
+
+#### Deleted property
+
+The column remains in SQLite with its historical data but stops being updated.
+
+### Resetting the Database
+
+```bash
+rm notion_analytics.db    # Linux
+del notion_analytics.db   # Windows
+
+venv/bin/python sync.py   # Linux
+venv\Scripts\python sync.py  # Windows
+```
+
+The next run recreates all tables. Change history starts fresh from that point.
 
 ---
 
-## Resetting the database
+## Updating
 
-To start fresh (e.g. switching from test to production data, or after a config overhaul):
+### 1. Stop the scheduler
+
+**Windows — Task Scheduler:**
+Right-click the `Notion Analytics Sync` task → **Disable**. If it is currently running, also click **End** before disabling.
+
+**Linux — systemd timer:**
+```bash
+sudo systemctl stop notion-analytics.timer
+```
+
+**Linux — cron:**
+```bash
+crontab -e   # comment out the sync line with #
+```
+
+### 2. Pull and reinstall
 
 ```bash
-rm notion_analytics.db
-python sync.py
+git pull
 ```
 
-The next run recreates all tables and re-syncs everything from Notion. Change history starts fresh from that point.
-
-For testing without touching production data, use a separate config file with a different `db_path`:
-
-```toml
-# config_test.toml
-[output]
-db_path = "notion_powerbi_test.db"
-```
+Reinstall dependencies in case `requirements.txt` changed:
 
 ```bash
-python sync.py --config config_test.toml
+venv/bin/pip install -r requirements.txt    # Linux
+venv\Scripts\pip install -r requirements.txt   # Windows
 ```
+
+Check the [commit history](https://github.com/DreamShark-Bytes/Notion_Analytics/commits/main) for breaking changes or migration steps before continuing.
+
+### 3. Run the sync once manually
+
+```bash
+venv/bin/python sync.py    # Linux
+venv\Scripts\python sync.py   # Windows
+```
+
+Schema changes are applied automatically. Verify the log looks clean before re-enabling the scheduler.
+
+### 4. Re-enable the scheduler
+
+**Windows — Task Scheduler:**
+Right-click the task → **Enable**.
+
+**Linux — systemd timer:**
+```bash
+sudo systemctl start notion-analytics.timer
+```
+
+**Linux — cron:**
+```bash
+crontab -e   # remove the # from the sync line
+```
+
+---
+
+## Troubleshooting
+
+**`Failed to fetch database schema`**
+Integration token is wrong, or the integration hasn't been connected to that database in Notion (`...` menu → Connect to).
+
+**`No databases configured`**
+`config.toml` is missing `[[databases]]` entries, or the wrong config file is being used.
+
+**Power BI can't find the SQLite file**
+Verify the file path in your ODBC DSN matches the actual `.db` file location. If the file is on a network share, confirm the drive is mapped before opening Power BI.
+
+**Columns missing in Power BI**
+New Notion properties don't appear until the next sync after they were added. If `include_columns` is set, check that list.
+
+**Change history looks wrong after a rename**
+Add the old and new property names to `column_renames` and run the sync once. See [Handling Schema Changes](#handling-schema-changes).
+
+**Full error details**
+Always check `notion_analytics.log` — the terminal only shows a summary.
+
+---
+
+## Known Limitations
+
+- No incremental sync yet — every run fetches all pages (planned)
+- Deleted pages are not detected — stale rows accumulate until a database reset (planned)
+- Power BI Service publishing requires a work or school Microsoft account
+
+---
+
+## Planned Features
+
+See [PLANNED.md](PLANNED.md) for design details.
+
+- Incremental sync (filter by `last_edited_time`)
+- Deleted page cleanup (soft delete with configurable lifespan)
+- Date field start/end split (`due_date` → `due_date_start` / `due_date_end`)
+- Select/status option ID tracking for rename detection
+- Change tracking backup
+
+---
+
+## Dependencies & Related Projects
+
+See [requirements.txt](requirements.txt) for the full dependency list.
+
+- **[Notion_API](https://github.com/DreamShark-Bytes/Notion_API)** — shared Notion API client used by this project (pinned via `requirements.txt`)
+- **[Notion_Automator](https://github.com/DreamShark-Bytes/Notion_Automator)** — companion daemon that writes automation logic back to Notion; this project reads what that one writes
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
 
 ---
 
 ## Credits
 
 Developed in collaboration with Claude Code by Anthropic. All architectural decisions, data model design, requirements definition, and production deployment are owned by the human author. Claude assisted with implementation, documentation, and code review under directed oversight — a design-led workflow where nothing ships without human review and approval.
-
----
-
-## Troubleshooting
-
-### Sync errors
-
-- **`Failed to fetch database schema`** — check that your integration token is correct and the integration has been connected to the database in Notion (`...` menu → Connect to).
-- **`No databases configured`** — `config.toml` is missing `[[databases]]` entries, or the wrong config file is being used.
-- Check `notion_analytics.log` for full error details — the terminal only shows a summary.
-
-### Power BI can't find the SQLite file
-
-- Verify the file path in your ODBC DSN points to the actual `.db` file location.
-- If the file is on a network share, make sure the drive is mapped and accessible before opening Power BI.
-
-### Columns missing in Power BI
-
-- A new Notion property won't appear until the next sync after it was added.
-- If `include_columns` is set in `config.toml`, only listed columns are synced — check that list.
-
-### Change history looks wrong after a Notion property rename
-
-- Add the old and new names to `column_renames` in `config.toml` and run the sync once. See [Handling Notion schema changes](#handling-notion-schema-changes).

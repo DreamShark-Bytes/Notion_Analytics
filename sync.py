@@ -31,7 +31,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("notion_powerbi.log"),
+        logging.FileHandler("notion_analytics.log"),
     ],
 )
 logger = logging.getLogger(__name__)
