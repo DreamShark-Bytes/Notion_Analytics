@@ -20,11 +20,20 @@ logger = logging.getLogger(__name__)
 
 # SQLite type for each Python type
 _TYPE_MAP = {
+    bool: "INTEGER",
     int: "INTEGER",
     float: "REAL",
     str: "TEXT",
     type(None): "TEXT",
 }
+
+
+def _val_to_str(val) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    return str(val)
 
 _SYSTEM_COLS = {
     "page_id": "TEXT PRIMARY KEY",
@@ -155,8 +164,8 @@ class Storage:
             (
                 page_id,
                 field,
-                str(old_value) if old_value is not None else None,
-                str(new_value) if new_value is not None else None,
+                _val_to_str(old_value),
+                _val_to_str(new_value),
                 valid_from,
                 detected_at,
             ),

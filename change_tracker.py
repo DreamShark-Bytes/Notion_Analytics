@@ -82,4 +82,6 @@ def detect_changes(
 def _to_str(val) -> str | None:
     if val is None:
         return None
+    if isinstance(val, bool):
+        return "1" if val else "0"
     return str(val)

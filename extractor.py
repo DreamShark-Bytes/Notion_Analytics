@@ -81,9 +81,18 @@ def extract_page_row(
         prop_value = page_props.get(prop_name, {})
 
         try:
-            row[col] = normalize_property(prop_type, prop_value, files_handling=files_handling)
+            if prop_type == "date":
+                d = prop_value.get("date")
+                row[col + "_start"] = d.get("start") if d else None
+                row[col + "_end"] = d.get("end") if d else None
+            else:
+                row[col] = normalize_property(prop_type, prop_value, files_handling=files_handling)
         except Exception as e:
             logger.warning(f"Failed to normalize '{prop_name}' ({prop_type}): {e}")
-            row[col] = None
+            if prop_type == "date":
+                row[col + "_start"] = None
+                row[col + "_end"] = None
+            else:
+                row[col] = None
 
     return row

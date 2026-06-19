@@ -94,10 +94,15 @@ Pages deleted in Notion stop appearing in sync results but remain in SQLite inde
 
 ### Open questions
 - Should deleted-page detection run automatically on every `--full`, or only with an explicit flag (e.g. `--detect-deleted`)?
+  - Answer: I would like it to run during an "overnight governance" run, similiar to how Notion_Automator runs it's overnight processing and does a little data governance. I understand this might require another Task Schedule(Windows)/Service(Linux) since we're not running a daemon. This would increase friction, but not by much. I don't imagine needing anything else that would run regularly like that. 
 - Should the option-rename tool live in a `tools/` subfolder (like Notion_Automator) or as a flag on `sync.py`?
+  - I would ultimately love this to be interactable through Notion. Whether that is an option to RUN it, or a toggle to allow it to automatically run and record history of changes. Think of the "Automation Hub" we have planned in Notion_Automator. If our solution to this follows in the same footsteps I imagine it would be an Analytics Hub? (though that might imply we have reports/charts/visuals there which is something to think about)
 
 ### Dependencies
 - Deleted page detection depends on incremental sync being in place first, so `--full` has a clear meaning.
+- Possible: 
+  - Create Page for "Analytics Hub" creation. 
+  - Image export for reports/visuals. (though if we use PowerBI for this, it appears to require either the dashboard be published (I don't have a work/school email to do this) or a PowerBI Pro account for it to email the image (looking to save money wherever possible)). Python does have charting abilities, but means we'd have to create charts twice. Once in our BI tool (PowerBI) and again in Python. Looks like Grafana allows this though. Grrr. I need to give that a try. 
 
 ---
 
@@ -229,7 +234,7 @@ Power BI, Grafana, and SQLite have no date-range type. Date fields (e.g. `due_da
 ## Select / Status Option ID Tracking
 
 **Status:** Pre-design
-**One-liner:** Store the stable Notion UUID for each select/status option alongside its display name, enabling rename detection without breaking history.
+**One-liner:** Store the stable Notion UUID for each select/status option alongside its display name, enabling rename detection and history correction.
 
 ### Problem
 When a Notion select option is renamed (e.g. "In Progress" → "Active"), `_pages` self-corrects on next sync, but `_changes` permanently retains the old name. The option's UUID is stable across renames — tracking it alongside the name allows retroactive history correction.
@@ -238,14 +243,29 @@ When a Notion select option is renamed (e.g. "In Progress" → "Active"), `_page
 - For select, multi-select, and status properties: also store `fieldname_id` (Notion option UUID).
 - For multi-select: comma-separated UUIDs in `fieldname_id`, paralleling existing comma-separated names in `fieldname`.
 - `_changes` tracks the ID column for rename detection; the name column for display.
-- The option-rename tool (see Data Maintenance Tools) uses `fieldname_id` to find affected `_changes` rows reliably.
+
+### Sync-time rename detection
+During each sync, after extracting the current option name and ID for a field:
+- If the stored `fieldname_id` matches the current ID but the name has changed → auto-apply the rename (update `_changes.field` display value, log it).
+- If the name exists in `_changes` but no matching option ID can be found in the Notion schema → flag it as an unresolved mismatch.
+
+### Resolution tool (interactive)
+A `tools/resolve_option_mismatches.py` script that:
+1. Scans `_changes` for field values that don't match any current option ID.
+2. For each mismatch, presents the user with:
+   - The unmatched name (e.g. "Old Status Name")
+   - Current options in that field (name + ID)
+   - Choice: **map** (it was renamed — select the matching current option) or **mark deleted** (the option no longer exists — store a sentinel like `[deleted]` and keep the display name for history).
+3. Writes the resolution back to `_changes` and logs it.
 
 ### Open questions
 - Opt-in per field, or default for all select/status/multi-select fields?
-- Does `change_tracker.py` need to be aware of the paired ID column to avoid producing duplicate change events (one for the name change, one for the ID non-change)?
+- Does `change_tracker.py` need to be aware of the paired `_id` column to avoid producing duplicate change events (one for the name change, one for the ID non-change)?
+- What sentinel value for deleted options — `[deleted]`, `null`, or a dedicated `deleted_at` on the option record?
 
 ### Dependencies
 - Pairs with Data Maintenance Tools option rename tool — the ID column makes that tool more reliable.
+- Requires a full re-sync after implementation to populate `fieldname_id` columns for existing pages.
 
 ---
 

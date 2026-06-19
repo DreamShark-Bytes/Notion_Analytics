@@ -41,6 +41,31 @@ logger = logging.getLogger(__name__)
 #  Config loading
 # ------------------------------------------------------------------ #
 
+def _expand_change_fields(fields: list[str], sample_row: dict) -> list[str]:
+    """
+    Expand sanitized date field names to their _start/_end split variants.
+
+    When a Notion date column (e.g. "due_date") has been migrated to
+    "due_date_start" / "due_date_end", the base name no longer appears in
+    page rows. This maps the base name to whichever split variants exist so
+    change tracking continues working without any config change.
+    """
+    if not fields:
+        return fields
+    expanded = []
+    for f in fields:
+        if f in sample_row:
+            expanded.append(f)
+        elif f"{f}_start" in sample_row or f"{f}_end" in sample_row:
+            if f"{f}_start" in sample_row:
+                expanded.append(f"{f}_start")
+            if f"{f}_end" in sample_row:
+                expanded.append(f"{f}_end")
+        else:
+            expanded.append(f)
+    return expanded
+
+
 def load_config(path: str) -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
@@ -100,6 +125,7 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
     pages_synced = 0
     changes_recorded = 0
     comments_synced = 0
+    _fields_expanded = False
 
     for page in pages:
         page_id = page["id"]
@@ -112,6 +138,16 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
 
         # --- Ensure table schema covers all columns in this row ---
         storage.ensure_pages_table(table, row)
+
+        # --- Expand change_fields for split date columns (once per database) ---
+        if track_changes and not _fields_expanded:
+            expanded_cf = _expand_change_fields(change_fields_san, row)
+            expanded_ex = _expand_change_fields(exclude_change_fields_san, row)
+            if expanded_cf != change_fields_san or expanded_ex != exclude_change_fields_san:
+                logger.debug(f"[{table}] change_fields expanded: {change_fields_san} → {expanded_cf}")
+            change_fields_san = expanded_cf
+            exclude_change_fields_san = expanded_ex
+            _fields_expanded = True
 
         # --- Change tracking ---
         if track_changes:

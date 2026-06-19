@@ -13,3 +13,6 @@ scratch.md
 Notion_Analytics-Session-History*.md
 /venv
 *.log
+*.bak
+.pytest_cache
+.claude
