@@ -48,6 +48,8 @@ def detect_changes(
     for field, new_val in new_row.items():
         if field in _ALWAYS_SKIP:
             continue
+        if field.endswith("_id") and field[:-3] in new_row:
+            continue  # _id shadow columns (select/status option IDs) — not user-facing
         if field in exclude_change_fields:
             continue
         if change_fields and field not in change_fields:

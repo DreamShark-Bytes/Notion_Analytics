@@ -64,3 +64,47 @@ def test_expansion_is_idempotent():
     once = _expand_change_fields(["due_date"], row)
     twice = _expand_change_fields(once, row)
     assert once == twice
+
+
+# ── Option ID wiring in record_change ─────────────────────────────────────────
+
+def test_record_change_includes_option_ids():
+    import sqlite3
+    from storage import Storage
+
+    s = Storage(":memory:")
+    s.ensure_changes_table("tasks")
+
+    s.record_change(
+        "tasks", "p1", "status",
+        "Open", "Done",
+        "2026-06-18", "2026-06-18",
+        old_value_id="opt_open",
+        new_value_id="opt_done",
+    )
+
+    row = s.conn.execute(
+        "SELECT old_value_id, new_value_id FROM tasks_changes WHERE field='status'"
+    ).fetchone()
+    assert row[0] == "opt_open"
+    assert row[1] == "opt_done"
+
+
+def test_record_change_null_ids_for_non_select():
+    import sqlite3
+    from storage import Storage
+
+    s = Storage(":memory:")
+    s.ensure_changes_table("tasks")
+
+    s.record_change(
+        "tasks", "p1", "name",
+        "Old Name", "New Name",
+        "2026-06-18", "2026-06-18",
+    )
+
+    row = s.conn.execute(
+        "SELECT old_value_id, new_value_id FROM tasks_changes WHERE field='name'"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] is None

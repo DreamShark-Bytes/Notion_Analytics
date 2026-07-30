@@ -22,7 +22,7 @@ except ImportError:
         sys.exit("Python < 3.11 detected: install tomli with 'pip install tomli'")
 
 from notion_api import NotionClient
-from extractor import extract_page_row, extract_comments, extract_content, sanitize_col
+from extractor import extract_page_row, extract_comments, extract_content, sanitize_col, _SKIP_TYPES
 from storage import Storage
 from change_tracker import detect_changes
 
@@ -40,6 +40,126 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------ #
 #  Config loading
 # ------------------------------------------------------------------ #
+
+_OPTION_TYPES = {"select", "status", "multi_select"}
+
+
+def _upsert_options(
+    table: str,
+    property_id: str,
+    prop_type: str,
+    schema: dict,
+    storage: Storage,
+    now: str,
+):
+    if prop_type in ("select", "multi_select"):
+        for opt in schema.get(prop_type, {}).get("options", []):
+            storage.upsert_option(table, property_id, opt["id"], opt["name"], None, now)
+    elif prop_type == "status":
+        status_def = schema.get("status", {})
+        opt_group = {}
+        for g in status_def.get("groups", []):
+            for oid in g.get("option_ids", []):
+                opt_group[oid] = g["name"]
+        for opt in status_def.get("options", []):
+            storage.upsert_option(
+                table, property_id, opt["id"], opt["name"], opt_group.get(opt["id"]), now
+            )
+
+
+def _do_backup(
+    table: str,
+    col: str,
+    prop_name: str,
+    stored_type: str,
+    prop_type: str,
+    storage: Storage,
+    now: str,
+):
+    date_str = now[:10].replace("-", "")
+    backup_name = storage.backup_column(table, col, date_str)
+    storage.record_backup(table, col, backup_name, stored_type, now)
+    logger.warning(
+        f"[{table}] Property '{prop_name}' changed type "
+        f"'{stored_type}' → '{prop_type}'. "
+        f"Old data preserved in '{backup_name}'. "
+        f"Run tools/cleanup_orphaned_columns.py to remove it when satisfied."
+    )
+
+
+def _compare_schema(
+    table: str,
+    notion_schema: dict,
+    storage: Storage,
+    now: str,
+) -> set[str]:
+    """
+    Compare the current Notion schema against the stored _schema table.
+
+    Automatically applies renames when a property_id is seen under a new name.
+    Renames the old column to col_bak_YYYYMMDD when a property type changes.
+    Logs WARNING for properties that have disappeared (may have been deleted).
+    Returns the set of _id shadow column names for select/status/multi_select fields.
+    """
+    stored = storage.get_stored_schema(table)
+    notion_props = notion_schema.get("properties", {})
+    seen_ids: set[str] = set()
+    id_shadow_cols: set[str] = set()
+
+    for prop_name, schema in notion_props.items():
+        prop_type = schema.get("type")
+        if prop_type in _SKIP_TYPES:
+            continue
+        property_id = schema.get("id")
+        if not property_id:
+            continue
+
+        col = sanitize_col(prop_name)
+        seen_ids.add(property_id)
+
+        if property_id in stored:
+            entry = stored[property_id]
+            stored_col = entry["column_name"]
+            stored_name = entry["property_name"]
+            stored_type = entry["property_type"]
+
+            if prop_name != stored_name:
+                logger.info(
+                    f"[{table}] Property renamed in Notion: '{stored_name}' → '{prop_name}' "
+                    f"(column: '{stored_col}' → '{col}'). Migrating data automatically."
+                )
+                storage.rename_column(table, stored_col, col)
+
+            if prop_type != stored_type:
+                existing_backup = storage.get_backup_for_type(table, col, prop_type)
+                if existing_backup:
+                    restored = storage.restore_backup(table, col, existing_backup)
+                    if restored:
+                        logger.info(
+                            f"[{table}] Property '{prop_name}' type reverted "
+                            f"'{stored_type}' → '{prop_type}'. Restored from '{existing_backup}'."
+                        )
+                    else:
+                        _do_backup(table, col, prop_name, stored_type, prop_type, storage, now)
+                else:
+                    _do_backup(table, col, prop_name, stored_type, prop_type, storage, now)
+
+        storage.upsert_schema(table, property_id, prop_name, col, prop_type, now)
+
+        if prop_type in _OPTION_TYPES:
+            id_shadow_cols.add(col + "_id")
+            _upsert_options(table, property_id, prop_type, schema, storage, now)
+
+    for property_id, entry in stored.items():
+        if property_id not in seen_ids:
+            logger.warning(
+                f"[{table}] Column '{entry['column_name']}' (Notion property '{entry['property_name']}') "
+                f"no longer exists in the Notion schema — it may have been deleted or renamed. "
+                f"Run tools/cleanup_orphaned_columns.py to remove it."
+            )
+
+    return id_shadow_cols
+
 
 def _expand_change_fields(fields: list[str], sample_row: dict) -> list[str]:
     """
@@ -104,6 +224,13 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
         logger.error(f"[{table}] Failed to fetch database schema: {e}")
         return
 
+    now = datetime.now(timezone.utc).isoformat()
+
+    storage.ensure_schema_table()
+    storage.ensure_options_table()
+    storage.ensure_backups_table()
+    id_shadow_cols = _compare_schema(table, db_schema, storage, now)
+
     logger.info(f"[{table}] Querying pages ...")
     try:
         pages = client.query_database(db_id)
@@ -115,12 +242,15 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
 
     if track_changes:
         storage.ensure_changes_table(table)
+        storage.backfill_option_names(table)
     if include_comments:
         storage.ensure_comments_table(table)
 
     # Sanitize change_fields / exclude_change_fields to match stored col names
     change_fields_san = [sanitize_col(f) for f in change_fields]
-    exclude_change_fields_san = [sanitize_col(f) for f in exclude_change_fields]
+    exclude_change_fields_san = list(
+        set(sanitize_col(f) for f in exclude_change_fields) | id_shadow_cols
+    )
 
     pages_synced = 0
     changes_recorded = 0
@@ -159,14 +289,17 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
                 exclude_change_fields_san,
             )
             for ch in changes:
+                field = ch["field"]
                 storage.record_change(
                     table,
                     ch["page_id"],
-                    ch["field"],
+                    field,
                     ch["old_value"],
                     ch["new_value"],
                     ch["valid_from"],
                     ch["detected_at"],
+                    old_value_id=prev_row.get(f"{field}_id") if prev_row else None,
+                    new_value_id=row.get(f"{field}_id"),
                 )
             changes_recorded += len(changes)
 

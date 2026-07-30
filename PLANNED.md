@@ -73,13 +73,9 @@ SQLite remains the transformation layer. The push script sends already-clean dat
 **Status:** Pre-design
 **One-liner:** CLI tools for correcting stale or inconsistent data in the SQLite database — select option renames and deleted page cleanup.
 
-### Select / Status Option Rename
+### Select / Status Option Rename — SHIPPED (v0.1.2)
 
-When a Notion select or status option is renamed (e.g. "In Progress" → "Active"), the `_pages` table self-corrects on the next sync (upsert overwrites with the new value). The problem is `_changes` historical records — they permanently retain the old option name in `old_value` and `new_value`, making trend charts inconsistent.
-
-**Proposed tool:** a script that takes a table name, field name, old option value, and new option value, then updates all matching rows in `{table}_changes`. Preview before committing (show count of affected rows). Backup first.
-
-If [[select-status-option-id-tracking]] is implemented, the rename tool becomes more reliable: it can find affected rows by option UUID rather than matching on potentially-ambiguous display names.
+Auto-handled at sync time via `backfill_option_names()` in `storage.py`. After `_upsert_options()` updates `_options` with the latest names, `_changes` `old_value`/`new_value` are updated to match via correlated subquery on `old_value_id`/`new_value_id`. No manual tool needed.
 
 ### Deleted Page Cleanup
 
@@ -154,6 +150,24 @@ Pages deleted in Notion stop appearing in sync results but remain in SQLite inde
 ### Dependencies
 - First sync must complete successfully before dashboard work begins.
 - Pursuits and Areas tables needed for dimensional joins.
+
+---
+
+## Job Search / Career Dashboard
+
+**Status:** In progress — foundation built
+**One-liner:** Power BI dashboard tracking job search activity, pacing, and funnel metrics from `job_applications_pages`.
+
+### Built so far
+- Date table: `CALENDAR([Notion Start Date], TODAY())` with Year, Month, Week columns — shared across all fact tables
+- Relationship: `Date Table[Date]` → `job_applications_pages[applied_date]`
+- Measures: `Unemployment Start Date`, `Days Unemployed`, `Weeks Unemployed`, `Months Unemployed`, `Avg Daily Applications (All Time)`, `Avg Applications (7 Day Rolling)` (chart-aware via REMOVEFILTERS)
+- Combo chart: daily application bars + rolling avg line (secondary Y-axis); visual-level filter from unemployment start date
+
+### Open questions
+- What columns exist on `job_applications_pages`? (needed to design funnel/stage KPIs)
+- Additional KPIs desired: active pipeline, response rate, stage conversion rates, days to first response, source breakdown — which are trackable given current Notion fields?
+- Tasks open per day: semi-additive measure using tasks table; needs creation + completion date column names
 
 ---
 
@@ -310,6 +324,7 @@ Append-only CSV export of `_changes` tables, copied to OneDrive (already on Thin
 - Should backup run at the end of every sync automatically, or as a separate scheduled task?
 - OneDrive, Google Drive, or a local path to a second machine / NAS?
 - Should `_pages` also be backed up, or only `_changes`?
+- Minimum viable version: auto-create a `.bak` copy of the full `.db` file before each sync (same pattern as the migration tools). Simple, no cloud dependency. Add as a stepping stone before the full CSV+cloud approach.
 
 ---
 

@@ -16,3 +16,5 @@ Notion_Analytics-Session-History*.md
 *.bak
 .pytest_cache
 .claude
+database_commands.sql
+infrastructure_notes.md

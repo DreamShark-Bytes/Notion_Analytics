@@ -163,3 +163,18 @@ def test_none_to_value_is_change():
     new = {**_base_row(), "due_date_start": "2026-06-01"}
     changes = detect_changes(new, old, [], [])
     assert any(c["field"] == "due_date_start" for c in changes)
+
+
+def test_id_shadow_column_skipped():
+    row = {**_base_row(), "status": "Open", "status_id": "abc123"}
+    changes = detect_changes(row, None, [], [])
+    assert not any(c["field"] == "status_id" for c in changes)
+    assert any(c["field"] == "status" for c in changes)
+
+
+def test_id_shadow_skipped_on_change():
+    old = {**_base_row(), "status": "Open", "status_id": "abc123"}
+    new = {**_base_row(), "status": "Done", "status_id": "def456"}
+    changes = detect_changes(new, old, [], [])
+    assert not any(c["field"] == "status_id" for c in changes)
+    assert any(c["field"] == "status" for c in changes)

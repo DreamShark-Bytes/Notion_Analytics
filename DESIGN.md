@@ -135,6 +135,42 @@ notion-api @ git+https://github.com/DreamShark-Bytes/Notion_API.git@v1.0.1
 
 ---
 
+## ThinkPad Infrastructure
+
+Remote access machine for Notion_Analytics + Power BI. Always-on desk station — not a traveling laptop.
+
+### Sleep / Power settings
+
+The ThinkPad X1 Carbon 6th Gen firmware supports **only Modern Standby (S0 Low Power Idle)**. S1/S2/S3/Hibernate are unavailable. When Modern Standby enters Austerity mode (battery drained below threshold), it cuts the network adapter without firing a wake event, which leaves Tailscale disconnected.
+
+Configured power settings (Balanced plan):
+
+| Setting | AC | DC | Command |
+|---|---|---|---|
+| Sleep after | Never | Never | `powercfg /change standby-timeout-dc 0` |
+| Lid close action | Do nothing | Do nothing | `powercfg /setacvalueindex SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936 0` + DC variant + `powercfg /setactive SCHEME_CURRENT` |
+
+### Tailscale watchdog — Task Scheduler task
+
+Because Modern Standby can still fire (display timeout, other triggers), a watchdog task restarts Tailscale on every Modern Standby exit.
+
+| Field | Value |
+|---|---|
+| Task name | `Tailscale - Restart on Standby Exit` |
+| Run as | SYSTEM |
+| Run with highest privileges | Yes |
+| Trigger | On event — Log: System, Source: Kernel-Power, Event ID: 507 |
+| Trigger delay | 30 seconds (lets network adapter initialize before restart) |
+| Action | `powershell.exe -NonInteractive -WindowStyle Hidden -Command "Restart-Service -Name Tailscale -Force"` |
+| Conditions | Start on battery: Yes (AC-only unchecked) |
+| If already running | Do not start a new instance |
+
+Event ID 507 = system exiting Modern Standby. Event ID 506 = entering Modern Standby.
+
+If this machine is ever rebuilt, recreate both the power settings and this task before relying on remote access.
+
+---
+
 ## Decision Log
 
 | Decision                                                | Rationale                                                                                                |

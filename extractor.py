@@ -85,6 +85,18 @@ def extract_page_row(
                 d = prop_value.get("date")
                 row[col + "_start"] = d.get("start") if d else None
                 row[col + "_end"] = d.get("end") if d else None
+            elif prop_type == "select":
+                sel = prop_value.get("select")
+                row[col] = sel["name"] if sel else None
+                row[col + "_id"] = sel["id"] if sel else None
+            elif prop_type == "status":
+                s = prop_value.get("status")
+                row[col] = s["name"] if s else None
+                row[col + "_id"] = s["id"] if s else None
+            elif prop_type == "multi_select":
+                opts = prop_value.get("multi_select", [])
+                row[col] = ", ".join(o["name"] for o in opts) if opts else None
+                row[col + "_id"] = ", ".join(o["id"] for o in opts) if opts else None
             else:
                 row[col] = normalize_property(prop_type, prop_value, files_handling=files_handling)
         except Exception as e:
@@ -92,6 +104,9 @@ def extract_page_row(
             if prop_type == "date":
                 row[col + "_start"] = None
                 row[col + "_end"] = None
+            elif prop_type in ("select", "status", "multi_select"):
+                row[col] = None
+                row[col + "_id"] = None
             else:
                 row[col] = None
 
