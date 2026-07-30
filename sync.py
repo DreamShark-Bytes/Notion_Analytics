@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import logging
+import time
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -199,7 +200,7 @@ def _db_cfg(db: dict, key: str, default=None):
 #  Per-database sync
 # ------------------------------------------------------------------ #
 
-def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bool):
+def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bool, content_fetch_delay_ms: int = 0):
     db_id = db_cfg["id"]
     table = db_cfg["name"]
     include_cols: list[str] = _db_cfg(db_cfg, "include_columns", [])
@@ -280,6 +281,8 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
 
         if include_content:
             row["content_text"] = extract_content(client, page_id)
+            if content_fetch_delay_ms > 0:
+                time.sleep(content_fetch_delay_ms / 1000)
 
         # --- Ensure table schema covers all columns in this row ---
         storage.ensure_pages_table(table, row)
@@ -358,6 +361,7 @@ def main():
     db_path = output_cfg.get("db_path", "notion_powerbi.db")
     export_csv = output_cfg.get("export_csv", False)
     csv_dir = output_cfg.get("csv_dir", "exports")
+    content_fetch_delay_ms: int = output_cfg.get("content_fetch_delay_ms", 0)
 
     databases = cfg.get("databases", [])
     if not databases:
@@ -373,7 +377,7 @@ def main():
 
     for db_cfg in databases:
         try:
-            sync_database(client, db_cfg, storage, full=args.full)
+            sync_database(client, db_cfg, storage, full=args.full, content_fetch_delay_ms=content_fetch_delay_ms)
         except Exception as e:
             logger.error(f"Unexpected error syncing '{db_cfg.get('name')}': {e}", exc_info=True)
 
