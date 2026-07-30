@@ -11,7 +11,7 @@ Usage:
 import argparse
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     import tomllib
@@ -229,11 +229,26 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
     storage.ensure_schema_table()
     storage.ensure_options_table()
     storage.ensure_backups_table()
+    storage.ensure_meta_table()
     id_shadow_cols = _compare_schema(table, db_schema, storage, now)
+
+    meta_key = f"last_sync:{table}"
+    last_sync = None if full else storage.get_meta(meta_key)
+
+    if last_sync:
+        cutoff = (datetime.fromisoformat(last_sync) - timedelta(seconds=60)).isoformat()
+        filter_payload = {
+            "timestamp": "last_edited_time",
+            "last_edited_time": {"on_or_after": cutoff},
+        }
+        logger.info(f"[{table}] Incremental sync from {cutoff}")
+    else:
+        filter_payload = None
+        logger.info(f"[{table}] Full sync (no prior timestamp)")
 
     logger.info(f"[{table}] Querying pages ...")
     try:
-        pages = client.query_database(db_id)
+        pages = client.query_database(db_id, filter_payload=filter_payload)
     except Exception as e:
         logger.error(f"[{table}] Failed to query database: {e}")
         return
@@ -314,6 +329,7 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
                 storage.upsert_comment(table, comment)
             comments_synced += len(comments)
 
+    storage.set_meta(meta_key, now)
     logger.info(
         f"[{table}] Done. "
         f"{pages_synced} pages synced, "

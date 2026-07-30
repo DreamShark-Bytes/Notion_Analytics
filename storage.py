@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS "_backups" (
 )
 """
 
+_META_TABLE = """
+CREATE TABLE IF NOT EXISTS "_meta" (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+"""
+
 _COMMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS "{table}_comments" (
     comment_id      TEXT PRIMARY KEY,
@@ -527,6 +534,27 @@ class Storage:
             self._known_cols[table].discard(col)
             self._known_cols[table].add(backup_name)
         return backup_name
+
+    # ------------------------------------------------------------------ #
+    #  Meta table
+    # ------------------------------------------------------------------ #
+
+    def ensure_meta_table(self):
+        self.conn.execute(_META_TABLE)
+        self.conn.commit()
+
+    def get_meta(self, key: str) -> str | None:
+        cur = self.conn.execute('SELECT value FROM "_meta" WHERE key = ?', (key,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str):
+        self.conn.execute(
+            'INSERT INTO "_meta" (key, value) VALUES (?, ?) '
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
 
     def close(self):
         self.conn.close()
