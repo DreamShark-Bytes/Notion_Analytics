@@ -154,16 +154,16 @@ Configured power settings (Balanced plan):
 
 Because Modern Standby can still fire (display timeout, other triggers), a watchdog task restarts Tailscale on every Modern Standby exit.
 
-| Field | Value |
-|---|---|
-| Task name | `Tailscale - Restart on Standby Exit` |
-| Run as | SYSTEM |
-| Run with highest privileges | Yes |
-| Trigger | On event — Log: System, Source: Kernel-Power, Event ID: 507 |
-| Trigger delay | 30 seconds (lets network adapter initialize before restart) |
-| Action | `powershell.exe -NonInteractive -WindowStyle Hidden -Command "Restart-Service -Name Tailscale -Force"` |
-| Conditions | Start on battery: Yes (AC-only unchecked) |
-| If already running | Do not start a new instance |
+| Field                       | Value                                                                                                  |
+| -----------------------------| --------------------------------------------------------------------------------------------------------|
+| Task name                   | `Tailscale - Restart on Standby Exit`                                                                  |
+| Run as                      | SYSTEM                                                                                                 |
+| Run with highest privileges | Yes                                                                                                    |
+| Trigger                     | On event — Log: System, Source: Kernel-Power, Event ID: 507                                            |
+| Trigger delay               | 30 seconds (lets network adapter initialize before restart)                                            |
+| Action                      | `powershell.exe -NonInteractive -WindowStyle Hidden -Command "Restart-Service -Name Tailscale -Force"` |
+| Conditions                  | Start on battery: Yes (AC-only unchecked)                                                              |
+| If already running          | Do not start a new instance                                                                            |
 
 Event ID 507 = system exiting Modern Standby. Event ID 506 = entering Modern Standby.
 
@@ -173,7 +173,9 @@ If this machine is ever rebuilt, recreate both the power settings and this task 
 
 ## Decision Log
 
-| Decision                                                | Rationale                                                                                                |
+| Decision                                                | Rationale                                                                                                 |
+| Incremental sync via `last_edited_time` filter; timestamp stored in `_meta` table | Cuts sync from ~20 min to ~12 seconds; `--full` flag is the escape hatch; timestamp captured at sync-start so edits during the run aren't missed |
+| `content_fetch_delay_ms` is a global `[output]` setting | No reason to vary delay per database; prevents Notion API connection resets on large full syncs |
 | ---------------------------------------------------------| ----------------------------------------------------------------------------------------------------------|
 | SQLite over a dedicated Notion database for storage     | No API overhead on reads; portable; Power BI connects natively via ODBC                                  |
 | Change tracking in the sync tool (not Notion_Automator) | PowerBI owns its own history; Automator's change tracking (if implemented) is separate and complementary |
