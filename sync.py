@@ -272,6 +272,7 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
     changes_recorded = 0
     comments_synced = 0
     _fields_expanded = False
+    total_pages = len(pages)
 
     for page in pages:
         page_id = page["id"]
@@ -332,6 +333,16 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
                 storage.upsert_comment(table, comment)
             comments_synced += len(comments)
 
+        # --- In-place terminal progress (stdout only, not logged) ---
+        pct = int(pages_synced / total_pages * 100) if total_pages else 0
+        print(
+            f"\r  [{table}] {pages_synced}/{total_pages} pages ({pct}%)"
+            f" | {changes_recorded} changes | {comments_synced} comments",
+            end="",
+            flush=True,
+        )
+
+    print()  # move past the progress line
     storage.set_meta(meta_key, now)
     logger.info(
         f"[{table}] Done. "
