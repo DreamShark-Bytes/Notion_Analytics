@@ -1,0 +1,16 @@
+# Pipeline Pi requirements — install on the dedicated pipeline Pi 4B.
+# This is separate from the main requirements.txt (sync.py dependencies).
+#
+# Install:
+#   pip install -r pipeline_requirements.txt
+
+# dbt core + DuckDB adapter
+dbt-core>=1.8
+dbt-duckdb>=1.8     # includes dbt-core adapter; handles SQLite ATTACH via DuckDB
+
+# DuckDB — analytical engine and Parquet exporter
+duckdb>=1.0
+
+# Airflow — standalone mode (SequentialExecutor, no Celery/Redis)
+# Install separately following: https://airflow.apache.org/docs/apache-airflow/stable/start.html
+# apache-airflow>=2.9   # uncomment after pip install with constraints file

@@ -19,3 +19,11 @@ Notion_Analytics-Session-History*.md
 database_commands.sql
 infrastructure_notes.md
 PLANNED.md
+
+# dbt build artifacts and DuckDB database files
+*.duckdb
+dbt/target/
+dbt/dbt_packages/
+
+# Parquet export output
+data/parquet/

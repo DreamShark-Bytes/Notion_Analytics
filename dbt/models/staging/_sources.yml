@@ -1,0 +1,29 @@
+version: 2
+
+sources:
+  - name: notion_raw
+    description: >
+      Raw Notion data synced by sync.py into SQLite (notion_analytics.db).
+      Attached to DuckDB as a read-only source via profiles.yml — dbt never
+      writes to this database.
+    database: notion_raw   # alias set in profiles.yml attach block
+    schema: main           # SQLite default schema
+
+    tables:
+      - name: tasks_pages
+        description: "Current state of every page in the Notion Tasks database. One row per task."
+
+      - name: tasks_changes
+        description: "Append-only field-level change history for tasks (Status, Due Date, Closed Date)."
+
+      - name: job_applications_pages
+        description: "Current state of every page in the Notion Job Applications database."
+
+      - name: job_applications_changes
+        description: "Field-level change history for job applications (Status)."
+
+      - name: pursuits_pages
+        description: "Current state of every page in the Notion Pursuits database."
+
+      - name: recurring_task_definitions_pages
+        description: "Recurring task templates from Notion."

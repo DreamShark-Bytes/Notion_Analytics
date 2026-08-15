@@ -1,0 +1,24 @@
+version: 2
+
+# Intermediate models sit between staging and marts.
+# They join, aggregate, and reshape staging data into shapes that mart models
+# can consume cleanly. Materialized as tables so mart queries are fast.
+#
+# Planned models (not yet built — implement after staging is validated):
+
+models: []
+
+# --- Planned ---
+#
+#  int_task_status_history
+#    Pivot stg_task_changes to produce one row per (page_id, status_value)
+#    interval: [valid_from, next_valid_from). Enables MTTR and open-volume-daily
+#    calculations without repeated self-joins in mart models.
+#
+#  int_recurring_completions
+#    Join tasks_pages to recurring_task_definitions_pages to identify which
+#    completions belong to a recurring series. Enables adherence-rate KPIs.
+#
+#  int_task_active_days
+#    For each task, compute the calendar days it spent in each status bucket
+#    (open, in-progress, blocked, done). Feeds fct_mttr.

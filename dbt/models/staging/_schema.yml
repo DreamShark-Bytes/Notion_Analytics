@@ -1,0 +1,105 @@
+version: 2
+
+models:
+  - name: stg_tasks
+    description: >
+      Tasks from Notion with all date/timestamp columns cast to native DuckDB
+      types. All other columns pass through from the source unchanged —
+      new Notion properties appear here automatically on the next sync.
+    columns:
+      - name: page_id
+        description: "Notion page UUID. Primary key."
+        data_tests:
+          - not_null
+          - unique
+      - name: created_time
+        description: "Page creation timestamp (UTC)."
+        data_tests:
+          - not_null
+      - name: last_edited_time
+        description: "Last edit timestamp (UTC)."
+        data_tests:
+          - not_null
+      - name: status
+        description: "Current value of the Status select property."
+      - name: due_date_start
+        description: "Start of the Due Date range (or the single due date). Cast to DATE."
+      - name: due_date_end
+        description: "End of the Due Date range, if set. Cast to DATE."
+      - name: closed_date_start
+        description: "Date the task was marked closed. Cast to DATE."
+
+  - name: stg_task_changes
+    description: >
+      Field-level change history for tasks. Each row represents one field
+      changing value on one page, detected at sync time.
+    columns:
+      - name: id
+        description: "Auto-increment primary key."
+        data_tests:
+          - not_null
+          - unique
+      - name: page_id
+        description: "Notion page UUID. Foreign key to stg_tasks."
+        data_tests:
+          - not_null
+      - name: field
+        description: "Name of the changed field (e.g. 'Status', 'Due Date')."
+        data_tests:
+          - not_null
+      - name: old_value
+        description: "Previous field value (text)."
+      - name: new_value
+        description: "New field value (text)."
+      - name: valid_from
+        description: "Timestamp when the new value became current (approximated from last_edited_time)."
+      - name: detected_at
+        description: "Timestamp when sync.py detected this change."
+        data_tests:
+          - not_null
+
+  - name: stg_job_applications
+    description: >
+      Job applications from Notion with date columns cast to DATE and boolean
+      flags (resume, cover_letter) cast to BOOLEAN.
+    columns:
+      - name: page_id
+        description: "Notion page UUID. Primary key."
+        data_tests:
+          - not_null
+          - unique
+      - name: status
+        description: "Current application status (e.g. Applied, Interview, Rejected)."
+      - name: applied_date_start
+        description: "Application submission date. Cast to DATE."
+      - name: follow_up_date_start
+        description: "Scheduled follow-up date. Cast to DATE."
+      - name: resume
+        description: "Whether a resume was submitted. Cast to BOOLEAN."
+      - name: cover_letter
+        description: "Whether a cover letter was submitted. Cast to BOOLEAN."
+
+  - name: stg_job_application_changes
+    description: "Field-level change history for job applications (Status)."
+    columns:
+      - name: id
+        data_tests:
+          - not_null
+          - unique
+      - name: page_id
+        data_tests:
+          - not_null
+      - name: detected_at
+        data_tests:
+          - not_null
+
+  - name: stg_pursuits
+    description: >
+      Pursuits (goals/projects) from Notion with system timestamps cast.
+      Property columns pass through unchanged — schema is characterized as
+      pursuit tracking evolves.
+    columns:
+      - name: page_id
+        data_tests:
+          - not_null
+          - unique

@@ -1,0 +1,36 @@
+version: 2
+
+# Mart models are the final, Power BI-ready fact and dimension tables.
+# Exported to Parquet by dbt/scripts/export_parquet.py after each dbt run.
+# Materialized as tables for fast export and ad-hoc DuckDB querying.
+#
+# Planned models (not yet built — implement after intermediate layer is in place):
+
+models: []
+
+# --- Planned ---
+#
+#  fct_tasks_closed
+#    One row per closed task with created_at, closed_at, status at close,
+#    and all dimension keys. Base fact table for throughput analysis.
+#
+#  fct_open_volume_daily
+#    One row per calendar day with count of open tasks that day.
+#    Built from int_task_status_history. Feeds the open volume trend chart.
+#
+#  fct_mttr
+#    Mean time to resolution per pursuit/area/time period.
+#    Built from int_task_active_days.
+#
+#  fct_due_date_drift
+#    One row per task per due-date change event. Measures how often and how
+#    far due dates shift. Built from stg_task_changes filtered to 'Due Date'.
+#
+#  fct_job_applications
+#    One row per job application with all KPI-relevant columns plus computed
+#    fields: days_to_first_response, is_ghosted, funnel_stage_reached.
+#    Built from stg_job_applications + stg_job_application_changes.
+#
+#  dim_pursuits
+#    Slowly-changing dimension for pursuits/goals. Includes current status
+#    and pursuit name for use as a filter dimension in Power BI.

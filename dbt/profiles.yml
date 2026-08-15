@@ -1,0 +1,25 @@
+# dbt connection profile for Notion Analytics pipeline.
+#
+# Set these environment variables on the pipeline Pi before running dbt:
+#   DUCKDB_PATH    — path to the DuckDB analytical database file
+#                    e.g. /home/pi/data/analytics.duckdb
+#   NOTION_DB_PATH — path to the SQLite file written by sync.py
+#                    e.g. /home/pi/data/notion_analytics.db
+#
+# Run dbt from inside the dbt/ folder:
+#   cd dbt && dbt run --profiles-dir .
+
+notion_analytics:
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '/home/pi/data/analytics.duckdb') }}"
+      extensions:
+        - sqlite             # DuckDB built-in extension; enables ATTACH for SQLite
+      attach:
+        - path: "{{ env_var('NOTION_DB_PATH') }}"
+          alias: notion_raw  # referenced as source database in _sources.yml
+          type: sqlite
+          read_only: true    # dbt never writes to the Notion SQLite file
+      threads: 4
+  target: dev

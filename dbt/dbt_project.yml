@@ -1,0 +1,26 @@
+name: notion_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: notion_analytics
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  notion_analytics:
+    staging:
+      +materialized: view       # always fresh; cheap since source is local SQLite
+      +schema: staging
+    intermediate:
+      +materialized: table      # persisted for mart joins
+      +schema: intermediate
+    marts:
+      +materialized: table      # final fact/dim tables; exported to Parquet
+      +schema: marts
