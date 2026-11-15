@@ -153,6 +153,86 @@ def test_type_change_creates_backup(caplog):
     assert any("type" in msg.lower() for msg in caplog.messages)
 
 
+def test_backup_column_missing_returns_none():
+    s = _make_storage()
+    s.conn.execute("CREATE TABLE tasks_pages (page_id TEXT, effort_start TEXT, effort_end TEXT)")
+    assert s.backup_column("tasks", "effort", "20260618") is None
+    cols = {r[1] for r in s.conn.execute("PRAGMA table_info('tasks_pages')")}
+    assert cols == {"page_id", "effort_start", "effort_end"}
+
+
+@pytest.mark.parametrize(
+    "physical_cols",
+    [
+        "page_id TEXT PRIMARY KEY",                                      # column never created
+        "page_id TEXT PRIMARY KEY, effort_start TEXT, effort_end TEXT",  # date property
+    ],
+)
+def test_type_change_without_physical_column_does_not_crash(physical_cols, caplog):
+    s = _make_storage()
+    s.conn.execute(f"CREATE TABLE tasks_pages ({physical_cols})")
+    s.upsert_schema("tasks", "pid_effort", "Effort", "effort", "rollup", "2026-01-01")
+
+    schema = _notion_schema(("pid_effort", "Effort", "formula"))
+    with caplog.at_level("WARNING"):
+        _compare_schema("tasks", schema, s, "2026-06-18T00:00:00Z")
+
+    assert s.get_stored_schema("tasks")["pid_effort"]["property_type"] == "formula"
+    assert s.conn.execute("SELECT COUNT(*) FROM _backups").fetchone()[0] == 0
+    assert any("Nothing was backed up" in msg for msg in caplog.messages)
+    cols = {r[1] for r in s.conn.execute("PRAGMA table_info('tasks_pages')")}
+    assert not any("_bak_" in c for c in cols)
+
+
+# ── _compare_schema: honors include_columns / exclude_columns ─────────────────
+
+def test_excluded_property_type_change_is_ignored(caplog):
+    """The 2026-11-12 laptop crash: an excluded rollup changed type; no column ever existed."""
+    s = _make_storage()
+    s.conn.execute("CREATE TABLE rtd_pages (page_id TEXT PRIMARY KEY)")
+    s.upsert_schema("rtd", "pid_lc", "Last Completed", "last_completed", "rollup", "2026-01-01")
+
+    schema = _notion_schema(("pid_lc", "Last Completed", "formula"))
+    with caplog.at_level("WARNING"):
+        _compare_schema("rtd", schema, s, "2026-06-18T00:00:00Z", exclude_cols=["Last Completed"])
+
+    assert s.get_stored_schema("rtd")["pid_lc"]["property_type"] == "rollup"  # untouched
+    assert s.conn.execute("SELECT COUNT(*) FROM _backups").fetchone()[0] == 0
+    assert not caplog.messages  # no type-change warning, no "no longer exists" warning
+
+
+def test_excluded_property_is_not_added_to_schema():
+    s = _make_storage()
+    schema = _notion_schema(("pid_a", "Name", "title"), ("pid_b", "Notes", "rich_text"))
+    _compare_schema("tasks", schema, s, "2026-06-18T00:00:00Z", exclude_cols=["Notes"])
+    assert set(s.get_stored_schema("tasks")) == {"pid_a"}
+
+
+def test_property_outside_include_list_is_not_tracked():
+    s = _make_storage()
+    schema = _notion_schema(("pid_a", "Name", "title"), ("pid_b", "Notes", "rich_text"))
+    _compare_schema("tasks", schema, s, "2026-06-18T00:00:00Z", include_cols=["Name"])
+    assert set(s.get_stored_schema("tasks")) == {"pid_a"}
+
+
+def test_ignored_property_still_in_notion_is_not_reported_removed(caplog):
+    s = _make_storage()
+    s.upsert_schema("tasks", "pid_b", "Notes", "notes", "rich_text", "2026-01-01")
+    schema = _notion_schema(("pid_a", "Name", "title"), ("pid_b", "Notes", "rich_text"))
+    with caplog.at_level("WARNING"):
+        _compare_schema("tasks", schema, s, "2026-06-18T00:00:00Z", exclude_cols=["Notes"])
+    assert not any("no longer exists" in m for m in caplog.messages)
+
+
+def test_property_deleted_in_notion_is_still_reported_removed(caplog):
+    s = _make_storage()
+    s.upsert_schema("tasks", "pid_b", "Notes", "notes", "rich_text", "2026-01-01")
+    schema = _notion_schema(("pid_a", "Name", "title"))
+    with caplog.at_level("WARNING"):
+        _compare_schema("tasks", schema, s, "2026-06-18T00:00:00Z", exclude_cols=["Other"])
+    assert any("no longer exists" in m for m in caplog.messages)
+
+
 # ── _compare_schema: returns id shadow cols ───────────────────────────────────
 
 def test_returns_id_shadow_columns():

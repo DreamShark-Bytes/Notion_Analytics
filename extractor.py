@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "sanitize_col",
     "extract_page_row",
+    "is_ignored_property",
     "extract_content",
     "extract_comments",
 ]
@@ -43,6 +44,13 @@ def sanitize_col(name: str) -> str:
 # ------------------------------------------------------------------ #
 #  Page row extraction (SQLite-specific)
 # ------------------------------------------------------------------ #
+
+def is_ignored_property(prop_name: str, include_cols: list[str], exclude_cols: list[str]) -> bool:
+    """True when config says this property is not synced (include_columns / exclude_columns)."""
+    if include_cols and prop_name not in include_cols:
+        return True
+    return prop_name in exclude_cols
+
 
 def extract_page_row(
     page: dict,
@@ -72,9 +80,7 @@ def extract_page_row(
 
         if prop_type in _SKIP_TYPES:
             continue
-        if include_cols and prop_name not in include_cols:
-            continue
-        if prop_name in exclude_cols:
+        if is_ignored_property(prop_name, include_cols, exclude_cols):
             continue
 
         col = sanitize_col(prop_name)

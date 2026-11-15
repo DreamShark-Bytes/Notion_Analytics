@@ -6,6 +6,7 @@ Usage:
     python sync.py                   # one-shot sync using config.toml
     python sync.py --config my.toml  # use a different config file
     python sync.py --full            # ignore last-sync timestamp, fetch all pages
+    python sync.py --detect-deleted  # normal sync + mark pages trashed/purged/moved out (nightly)
 """
 
 import argparse
@@ -13,6 +14,8 @@ import logging
 import time
 import sys
 from datetime import datetime, timedelta, timezone
+
+import requests
 
 try:
     import tomllib
@@ -23,7 +26,9 @@ except ImportError:
         sys.exit("Python < 3.11 detected: install tomli with 'pip install tomli'")
 
 from notion_api import NotionClient
-from extractor import extract_page_row, extract_comments, extract_content, sanitize_col, _SKIP_TYPES
+from extractor import (
+    extract_page_row, extract_comments, extract_content, sanitize_col, is_ignored_property, _SKIP_TYPES,
+)
 from storage import Storage
 from change_tracker import detect_changes
 
@@ -79,6 +84,14 @@ def _do_backup(
 ):
     date_str = now[:10].replace("-", "")
     backup_name = storage.backup_column(table, col, date_str)
+    if backup_name is None:
+        logger.warning(
+            f"[{table}] Property '{prop_name}' changed type "
+            f"'{stored_type}' → '{prop_type}', but {table}_pages has no column '{col}' "
+            f"(never created, or a date property stored as '{col}_start'/'{col}_end'). "
+            f"Nothing was backed up; the stored type was updated."
+        )
+        return
     storage.record_backup(table, col, backup_name, stored_type, now)
     logger.warning(
         f"[{table}] Property '{prop_name}' changed type "
@@ -93,9 +106,14 @@ def _compare_schema(
     notion_schema: dict,
     storage: Storage,
     now: str,
+    include_cols: list[str] = (),
+    exclude_cols: list[str] = (),
 ) -> set[str]:
     """
     Compare the current Notion schema against the stored _schema table.
+
+    Properties that include_columns / exclude_columns tell the sync to ignore are skipped:
+    they never get a column, so they are not tracked, backed up, or reported as removed.
 
     Automatically applies renames when a property_id is seen under a new name.
     Renames the old column to col_bak_YYYYMMDD when a property type changes.
@@ -115,8 +133,11 @@ def _compare_schema(
         if not property_id:
             continue
 
-        col = sanitize_col(prop_name)
         seen_ids.add(property_id)
+        if is_ignored_property(prop_name, include_cols, exclude_cols):
+            continue
+
+        col = sanitize_col(prop_name)
 
         if property_id in stored:
             entry = stored[property_id]
@@ -197,11 +218,152 @@ def _db_cfg(db: dict, key: str, default=None):
 
 
 # ------------------------------------------------------------------ #
+#  Deleted / moved page detection
+# ------------------------------------------------------------------ #
+
+_GUARD_MIN_MISSING = 10  # the ratio guard only applies once at least this many pages look missing
+
+
+def _norm_id(value: str | None) -> str:
+    return (value or "").replace("-", "").lower()
+
+
+def _normalize_database_cfgs(databases: list[dict]) -> None:
+    """Ensure every [[databases]] block has `database_id`; the legacy `id` key is still accepted."""
+    for db_cfg in databases:
+        if "database_id" not in db_cfg:
+            if "id" not in db_cfg:
+                logger.error(f"[[databases]] entry '{db_cfg.get('name')}' has no database_id")
+                sys.exit(1)
+            logger.warning(f"[[databases]] '{db_cfg.get('name')}' uses the legacy key 'id'; rename it to 'database_id'")
+            db_cfg["database_id"] = db_cfg["id"]
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _parent_source_id(page: dict) -> str | None:
+    """
+    ID of the database / data source a page lives in, or None if its parent is
+    something else (a regular page, the workspace). This is the one place that
+    knows how a page names its parent, so a switch to data source IDs changes here only.
+    """
+    parent = page.get("parent") or {}
+    return parent.get("data_source_id") or parent.get("database_id")
+
+
+def _find_configured_table(page: dict, db_cfgs: list[dict]) -> str | None:
+    """Config name of the synced database the page now lives in, if any."""
+    parent_id = _norm_id(_parent_source_id(page))
+    if not parent_id:
+        return None
+    for cfg in db_cfgs:
+        if _norm_id(cfg.get("database_id")) == parent_id:
+            return cfg["name"]
+    return None
+
+
+def _classify_missing(client: NotionClient, page_id: str, db_cfgs: list[dict]) -> tuple[str, str | None] | None:
+    """
+    Decide why a stored page no longer appears in its database query.
+    Returns (state, moved_to), or None if it cannot be decided this run
+    (transient API error, or the page still reports this database as its parent).
+      trashed — page is in Notion's trash (recoverable until Notion purges it)
+      gone    — 404: permanently purged, or the integration lost access
+      moved   — page exists and is not trashed, but lives somewhere else
+    """
+    try:
+        page = client.get_page(page_id)
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return "gone", None
+        logger.warning(f"Could not check page {page_id}: {e}; will retry next run")
+        return None
+    if page.get("archived") or page.get("in_trash"):
+        return "trashed", None
+    return "moved", _find_configured_table(page, db_cfgs)
+
+
+def _reconcile_deleted(
+    client: NotionClient,
+    db_cfg: dict,
+    storage: Storage,
+    notion_ids: set[str],
+    db_cfgs: list[dict],
+    now: str,
+    track_changes: bool,
+) -> dict:
+    """
+    Compare every ID Notion returned for this database against what is stored.
+    Stored pages missing from Notion get a delete_state; already-deleted pages whose
+    state changed (trashed → gone) are updated. Returns counts for logging.
+    Restores (page reappears) are handled in sync_database's page loop.
+    """
+    table = db_cfg["name"]
+    guard_ratio: float = _db_cfg(db_cfg, "delete_guard_ratio", 0.5)
+    result = {"marked": 0, "updated": 0, "skipped": 0, "aborted": False}
+
+    if not storage.ensure_deletion_columns(table):
+        return result
+
+    live_ids = storage.get_live_page_ids(table)
+    deleted = storage.get_deleted_pages(table)
+    missing_live = live_ids - notion_ids
+    recheck = {pid for pid, state in deleted.items() if state == "trashed" and pid not in notion_ids}
+
+    if guard_ratio > 0 and live_ids:
+        too_many = (
+            len(missing_live) >= _GUARD_MIN_MISSING
+            and len(notion_ids) < guard_ratio * len(live_ids)
+        )
+        if not notion_ids or too_many:
+            logger.error(
+                f"[{table}] Deleted-page detection aborted: Notion returned {len(notion_ids)} page(s) "
+                f"but {len(live_ids)} are stored ({len(missing_live)} look missing). This looks like "
+                f"lost access or an API problem, not real deletions. Nothing was marked. "
+                f"To override, set delete_guard_ratio = 0 for this database."
+            )
+            result["aborted"] = True
+            return result
+
+    for page_id in sorted(missing_live | recheck):
+        verdict = _classify_missing(client, page_id, db_cfgs)
+        if verdict is None:
+            result["skipped"] += 1
+            continue
+        state, moved_to = verdict
+        if moved_to == table:
+            logger.warning(f"[{table}] Page {page_id} is missing from the query but still lives here; skipping")
+            result["skipped"] += 1
+            continue
+        old_state = deleted.get(page_id)
+        if state == old_state:
+            continue
+        storage.mark_deleted(table, page_id, state, moved_to, now)
+        if track_changes:
+            storage.record_change(table, page_id, "delete_state", old_state, state, now, now)
+        result["marked" if old_state is None else "updated"] += 1
+        detail = f" → {moved_to}" if moved_to else ""
+        logger.info(f"[{table}] Page {page_id}: {old_state or 'live'} → {state}{detail}")
+
+    return result
+
+
+# ------------------------------------------------------------------ #
 #  Per-database sync
 # ------------------------------------------------------------------ #
 
-def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bool, content_fetch_delay_ms: int = 0):
-    db_id = db_cfg["id"]
+def sync_database(
+    client: NotionClient,
+    db_cfg: dict,
+    storage: Storage,
+    full: bool,
+    content_fetch_delay_ms: int = 0,
+    detect_deleted: bool = False,
+    all_db_cfgs: list[dict] | None = None,
+):
+    db_id = db_cfg["database_id"]
     table = db_cfg["name"]
     include_cols: list[str] = _db_cfg(db_cfg, "include_columns", [])
     exclude_cols: list[str] = _db_cfg(db_cfg, "exclude_columns", [])
@@ -231,11 +393,12 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
     storage.ensure_options_table()
     storage.ensure_backups_table()
     storage.ensure_meta_table()
-    id_shadow_cols = _compare_schema(table, db_schema, storage, now)
+    id_shadow_cols = _compare_schema(table, db_schema, storage, now, include_cols, exclude_cols)
 
     meta_key = f"last_sync:{table}"
     last_sync = None if full else storage.get_meta(meta_key)
 
+    cutoff = None
     if last_sync:
         cutoff = (datetime.fromisoformat(last_sync) - timedelta(seconds=60)).isoformat()
         filter_payload = {
@@ -247,12 +410,24 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
         filter_payload = None
         logger.info(f"[{table}] Full sync (no prior timestamp)")
 
+    # Deleted-page detection needs every ID Notion has, so query unfiltered and
+    # narrow to the pages worth fetching in memory (same rule the API filter applies,
+    # plus pages we don't hold as live: new, moved in, or restored from the trash).
     logger.info(f"[{table}] Querying pages ...")
     try:
-        pages = client.query_database(db_id, filter_payload=filter_payload)
+        pages = client.query_database(db_id, filter_payload=None if detect_deleted else filter_payload)
     except Exception as e:
         logger.error(f"[{table}] Failed to query database: {e}")
         return
+
+    notion_ids = {p["id"] for p in pages}
+    if detect_deleted and cutoff:
+        cutoff_dt = datetime.fromisoformat(cutoff)
+        live_ids = storage.get_live_page_ids(table)
+        pages = [
+            p for p in pages
+            if p["id"] not in live_ids or _parse_ts(p["last_edited_time"]) >= cutoff_dt
+        ]
 
     logger.info(f"[{table}] {len(pages)} page(s) found")
 
@@ -322,6 +497,15 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
                 )
             changes_recorded += len(changes)
 
+            # A page we had marked deleted is back (restored, or moved in from elsewhere).
+            # The upsert below clears its delete columns; record that it came back.
+            if prev_row and prev_row.get("deleted_at"):
+                storage.record_change(
+                    table, page_id, "delete_state", prev_row.get("delete_state"), None, now, now
+                )
+                changes_recorded += 1
+                logger.info(f"[{table}] Page {page_id} is back (was {prev_row.get('delete_state')})")
+
         # --- Upsert page ---
         storage.upsert_page(table, row)
         pages_synced += 1
@@ -343,6 +527,17 @@ def sync_database(client: NotionClient, db_cfg: dict, storage: Storage, full: bo
         )
 
     print()  # move past the progress line
+
+    if detect_deleted:
+        outcome = _reconcile_deleted(
+            client, db_cfg, storage, notion_ids, all_db_cfgs or [db_cfg], now, track_changes
+        )
+        logger.info(
+            f"[{table}] Deleted-page check: {outcome['marked']} newly marked, "
+            f"{outcome['updated']} updated, {outcome['skipped']} skipped"
+            + (" (ABORTED by safety guard)" if outcome["aborted"] else "")
+        )
+
     storage.set_meta(meta_key, now)
     logger.info(
         f"[{table}] Done. "
@@ -360,6 +555,12 @@ def main():
     parser = argparse.ArgumentParser(description="Notion → Power BI sync")
     parser.add_argument("--config", default="config.toml", help="Path to config file")
     parser.add_argument("--full", action="store_true", help="Full refresh (fetch all pages)")
+    parser.add_argument(
+        "--detect-deleted",
+        action="store_true",
+        help="Also find pages that were trashed, purged or moved out of each database "
+             "(slower: lists every page ID; intended for the nightly run)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -378,6 +579,7 @@ def main():
     if not databases:
         logger.error("No databases configured in config.toml")
         sys.exit(1)
+    _normalize_database_cfgs(databases)
 
     client = NotionClient(token)
     storage = Storage(db_path)
@@ -388,7 +590,11 @@ def main():
 
     for db_cfg in databases:
         try:
-            sync_database(client, db_cfg, storage, full=args.full, content_fetch_delay_ms=content_fetch_delay_ms)
+            sync_database(
+                client, db_cfg, storage, full=args.full,
+                content_fetch_delay_ms=content_fetch_delay_ms,
+                detect_deleted=args.detect_deleted, all_db_cfgs=databases,
+            )
         except Exception as e:
             logger.error(f"Unexpected error syncing '{db_cfg.get('name')}': {e}", exc_info=True)
 

@@ -108,3 +108,25 @@ def test_record_change_null_ids_for_non_select():
     ).fetchone()
     assert row[0] is None
     assert row[1] is None
+
+
+def test_normalize_database_cfgs_accepts_database_id():
+    from sync import _normalize_database_cfgs
+    cfgs = [{"database_id": "abc", "name": "tasks"}]
+    _normalize_database_cfgs(cfgs)
+    assert cfgs[0]["database_id"] == "abc"
+
+
+def test_normalize_database_cfgs_falls_back_to_legacy_id(caplog):
+    from sync import _normalize_database_cfgs
+    cfgs = [{"id": "abc", "name": "tasks"}]
+    _normalize_database_cfgs(cfgs)
+    assert cfgs[0]["database_id"] == "abc"
+    assert "legacy key 'id'" in caplog.text
+
+
+def test_normalize_database_cfgs_exits_when_no_id():
+    import pytest
+    from sync import _normalize_database_cfgs
+    with pytest.raises(SystemExit):
+        _normalize_database_cfgs([{"name": "tasks"}])

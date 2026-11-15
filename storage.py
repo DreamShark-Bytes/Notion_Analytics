@@ -43,6 +43,16 @@ _SYSTEM_COLS = {
     "content_text": "TEXT",
 }
 
+# Soft-delete columns, added to every {name}_pages table (existing tables get them via ALTER).
+# deleted_at    — when the sweep first noticed the page missing (kept across state changes)
+# delete_state  — 'trashed' (recoverable), 'gone' (404: purged or access lost), 'moved' (left this database)
+# moved_to      — config name of the database a moved page now lives in, if it is one we sync
+_DELETION_COLS = {
+    "deleted_at": "TEXT",
+    "delete_state": "TEXT",
+    "moved_to": "TEXT",
+}
+
 _CHANGES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS "{table}_changes" (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,6 +152,7 @@ class Storage:
             self.conn.commit()
             self._known_cols[table] = self._fetch_col_names(f"{table}_pages")
 
+        self.ensure_deletion_columns(table)
         existing = self._known_cols[table]
         for col, val in sample_row.items():
             if col in existing:
@@ -154,6 +165,52 @@ class Storage:
                 logger.debug(f"Added column '{col}' ({sqlite_type}) to {table}_pages")
             except sqlite3.OperationalError as e:
                 logger.warning(f"Could not add column '{col}': {e}")
+
+    def ensure_deletion_columns(self, table: str) -> bool:
+        """
+        Add the soft-delete columns to {table}_pages if missing.
+        Returns False if the pages table does not exist yet.
+        """
+        if table not in self._known_cols:
+            cols = self._fetch_col_names(f"{table}_pages")
+            if not cols:
+                return False
+            self._known_cols[table] = cols
+        existing = self._known_cols[table]
+        for col, sqlite_type in _DELETION_COLS.items():
+            if col in existing:
+                continue
+            self.conn.execute(f'ALTER TABLE "{table}_pages" ADD COLUMN "{col}" {sqlite_type}')
+            self.conn.commit()
+            existing.add(col)
+        return True
+
+    def get_live_page_ids(self, table: str) -> set[str]:
+        """Page IDs not marked deleted."""
+        try:
+            cur = self.conn.execute(f'SELECT page_id FROM "{table}_pages" WHERE deleted_at IS NULL')
+            return {row["page_id"] for row in cur.fetchall()}
+        except sqlite3.OperationalError:
+            return set()
+
+    def get_deleted_pages(self, table: str) -> dict[str, str | None]:
+        """{page_id: delete_state} for rows currently marked deleted."""
+        try:
+            cur = self.conn.execute(
+                f'SELECT page_id, delete_state FROM "{table}_pages" WHERE deleted_at IS NOT NULL'
+            )
+            return {row["page_id"]: row["delete_state"] for row in cur.fetchall()}
+        except sqlite3.OperationalError:
+            return {}
+
+    def mark_deleted(self, table: str, page_id: str, state: str, moved_to: str | None, now: str):
+        """Mark a page deleted/moved. deleted_at keeps its first-detected value."""
+        self.conn.execute(
+            f'UPDATE "{table}_pages" SET deleted_at = COALESCE(deleted_at, ?), '
+            f"delete_state = ?, moved_to = ? WHERE page_id = ?",
+            (now, state, moved_to, page_id),
+        )
+        self.conn.commit()
 
     def _fetch_col_names(self, table_name: str) -> set[str]:
         cur = self.conn.execute(f'PRAGMA table_info("{table_name}")')
@@ -517,10 +574,16 @@ class Storage:
             pass
         logger.info(f"[{table}] Column renamed: '{old_col}' → '{new_col}'")
 
-    def backup_column(self, table: str, col: str, date_str: str) -> str:
-        """Rename col to col_bak_YYYYMMDD in the pages table. Returns the backup name."""
+    def backup_column(self, table: str, col: str, date_str: str) -> str | None:
+        """
+        Rename col to col_bak_YYYYMMDD in the pages table. Returns the backup name,
+        or None when the pages table has no column named col (never created, or a date
+        property whose columns are col_start/col_end), so there is nothing to rename.
+        """
         backup_name = f"{col}_bak_{date_str}"
         existing = self._fetch_col_names(f"{table}_pages")
+        if col not in existing:
+            return None
         if backup_name in existing:
             i = 2
             while f"{backup_name}_{i}" in existing:

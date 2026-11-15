@@ -8,7 +8,7 @@ token = "ntn_your_token_here"
 # Add one [[databases]] block per Notion database.
 
 [[databases]]
-id = "your-database-id-here"       # Notion database ID (from the URL)
+database_id = "your-database-id-here"  # Notion database ID (from the URL)
 name = "tasks"                     # Table prefix in SQLite — no spaces, lowercase
 
 # Page body content (plain text, images/files skipped automatically)
@@ -34,9 +34,14 @@ exclude_change_fields = []         # Fields to never track (e.g. noisy computed 
 column_renames = {}
 # column_renames = {"Old Property Name" = "New Property Name"}
 
+# Deleted-page safety guard (only used by `sync.py --detect-deleted`).
+# If 10+ pages look missing and fewer than this fraction of stored pages remain,
+# nothing is marked deleted (likely lost access, not real deletions). 0 = guard off.
+# delete_guard_ratio = 0.5
+
 # Add more databases below:
 # [[databases]]
-# id = "another-database-id"
+# database_id = "another-database-id"
 # name = "projects"
 # include_content = false
 # include_comments = true
@@ -51,3 +56,4 @@ column_renames = {}
 db_path = "notion_powerbi.db"      # SQLite database file
 export_csv = false                 # Also write CSV files alongside SQLite
 csv_dir = "exports"
+content_fetch_delay_ms = 0           # Pause between per-page content requests; raise (e.g. 200) if Notion resets connections

@@ -7,7 +7,11 @@ __pycache__/
 *.py[cod]
 .venv/
 config.toml
+config_*.toml
+!config_example.toml
 CLAUDE.md
+AGENTS.md
+AI_AGENT_*.md
 STATUS.md
 scratch.md
 Notion_Analytics-Session-History*.md

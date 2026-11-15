@@ -85,6 +85,23 @@ Renamed properties: declare in `config.toml` under `column_renames`. On next syn
 
 Deleted properties: the column remains in SQLite with its historical data but stops being updated. No data is lost.
 
+### Type changes and column backups (implemented behavior, written 2026-11-15)
+
+Why: when a property's type is changed in Notion, Notion converts the values and the old ones may be lost there. The SQLite copy is then the only place the old values survive. It is not corruption protection: the backup lives in the same database file.
+
+How (`sync._compare_schema`, `storage.backup_column` / `restore_backup`):
+- Detection compares `_schema.property_type` (what we stored last sync) with the type Notion reports now, keyed by `property_id`.
+- On a change, `<col>` in `<table>_pages` is renamed to `<col>_bak_YYYYMMDD` (suffix `_2`, `_3` if taken) and one `_backups` row is written (table, column, backup column, old type; primary key table + column + type). A new `<col>` is created on the next synced page row.
+- If the property later returns to a type that has a backup, the new column is dropped and the backup is renamed back.
+- Backups stay indefinitely. No tool removes a tracked backup column or its `_backups` row: `tools/cleanup_orphaned_columns.py` skips columns listed in `_backups` (checked in code 2026-11-15), although the sync warning tells the user to run it. `_changes` is never backed up (its columns are TEXT).
+- Separate from this: `tools/migrate_column.py` and `tools/split_date_columns.py` copy the whole database to a `.bak` file before they run, and `tools/db_snapshot.py` makes consistent copies for the PC. Those are file-level backups, not column backups.
+
+Properties the config ignores (`exclude_columns`, or absent from a non-empty `include_columns`) are skipped by `_compare_schema` entirely, using the same `extractor.is_ignored_property` rule as page extraction: no `_schema` row, no type-change backup, no "no longer exists" warning. They have no physical column by design (decided 2026-11-15 after an excluded rollup's type change crashed the RTD sync; a stored `_schema` row left over from before the exclusion is simply ignored).
+
+If `<col>` does not exist in `<table>_pages` (column never created, or a date property stored as `_start`/`_end`), nothing is renamed, no `_backups` row is written, a WARNING is logged and the stored type is still updated (fixed 2026-11-15; a date property's `_start`/`_end` columns stay with their old data and stop updating).
+
+Known gaps (see PLANNED.md "Schema Change Handling" and "Auto-Backfill"): select-type `<col>_id` shadow columns are left behind; a property deleted and re-created under the same name is not seen as a type change.
+
 ---
 
 ## Column Sanitization
