@@ -93,12 +93,16 @@ def should_notify(state: dict, problems: dict[str, str], now: datetime, realert:
 # ── I/O ───────────────────────────────────────────────────────────────────────
 
 def read_last_syncs(db_path: Path) -> dict[str, str]:
-    """Read `last_sync:*` rows from `_meta` read-only. Raises on a missing or unreadable file."""
+    """Read `last_sync:*` rows from `_meta` read-only. Raises on a missing, unreadable or damaged file."""
     if not db_path.is_file():
         raise FileNotFoundError(f"database not found: {db_path}")
     uri = f"{db_path.resolve().as_uri()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=10)
     try:
+        # A copy can hold a fresh `_meta` and still be damaged elsewhere; quick_check reads every page.
+        verdict = conn.execute("PRAGMA quick_check").fetchone()[0]
+        if verdict != "ok":
+            raise sqlite3.DatabaseError(f"quick_check failed: {verdict}")
         rows = conn.execute(
             'SELECT key, value FROM "_meta" WHERE key LIKE ?', (META_PREFIX + "%",)
         ).fetchall()

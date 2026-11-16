@@ -6,6 +6,8 @@ If the database is copied to another Windows machine (for example to open it in 
 pythonw.exe check_freshness.py --db "C:\path\to\notion_analytics.db"
 ```
 
+It also runs SQLite's `PRAGMA quick_check` on the copy, so a damaged file is reported even when its timestamps look fresh.
+
 Create it as its own Task Scheduler task, separate from whatever copies the file, so it still fires when the copy task never runs:
 
 - **Run only when user is logged on** (a toast cannot be shown from a SYSTEM or logged-off task).

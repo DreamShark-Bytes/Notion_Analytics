@@ -56,4 +56,6 @@ column_renames = {}
 db_path = "notion_powerbi.db"      # SQLite database file
 export_csv = false                 # Also write CSV files alongside SQLite
 csv_dir = "exports"
+snapshot_dir = ""                  # Optional: after every run, write a consistent copy here for another machine to fetch (tools/db_snapshot.py fetch). Leave out or empty to disable
+snapshot_keep = 3                  # Snapshots to keep in snapshot_dir
 content_fetch_delay_ms = 0           # Pause between per-page content requests; raise (e.g. 200) if Notion resets connections

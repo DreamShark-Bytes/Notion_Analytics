@@ -1,3 +1,4 @@
+import sys
 from sync import _expand_change_fields
 
 
@@ -130,3 +131,105 @@ def test_normalize_database_cfgs_exits_when_no_id():
     from sync import _normalize_database_cfgs
     with pytest.raises(SystemExit):
         _normalize_database_cfgs([{"name": "tasks"}])
+
+
+# --- exit code: a failed database must make the run fail (Task Scheduler "Last Run Result") ---
+
+def _run_main(monkeypatch, tmp_path, results):
+    """Run sync.main() with sync_database stubbed; `results` maps table name -> True/False/Exception."""
+    import sync
+
+    cfg = {
+        "token": "x",
+        "output": {"db_path": str(tmp_path / "t.db")},
+        "databases": [{"name": n, "database_id": f"id-{n}"} for n in results],
+    }
+
+    def fake_sync_database(client, db_cfg, storage, **kwargs):
+        outcome = results[db_cfg["name"]]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(sync, "load_config", lambda path: cfg)
+    monkeypatch.setattr(sync, "NotionClient", lambda token: object())
+    monkeypatch.setattr(sync, "sync_database", fake_sync_database)
+    monkeypatch.setattr(sys, "argv", ["sync.py"])
+    sync.main()
+
+
+def test_main_exits_zero_when_all_databases_succeed(monkeypatch, tmp_path, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    _run_main(monkeypatch, tmp_path, {"a": True, "b": True})
+    assert "Sync complete" in caplog.text
+
+
+def test_main_exits_one_when_a_database_returns_failure(monkeypatch, tmp_path, caplog):
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        _run_main(monkeypatch, tmp_path, {"a": True, "b": False})
+    assert exc.value.code == 1
+    assert "1 failed database(s)" in caplog.text and "b" in caplog.text
+    assert "Sync complete" not in caplog.text
+
+
+def test_main_exits_one_when_a_database_raises_and_still_syncs_the_rest(monkeypatch, tmp_path, caplog):
+    import pytest
+    seen = []
+    import sync
+
+    def fake_sync_database(client, db_cfg, storage, **kwargs):
+        seen.append(db_cfg["name"])
+        if db_cfg["name"] == "a":
+            raise RuntimeError("boom")
+        return True
+
+    cfg = {"token": "x", "output": {"db_path": str(tmp_path / "t.db")},
+           "databases": [{"name": "a", "database_id": "1"}, {"name": "b", "database_id": "2"}]}
+    monkeypatch.setattr(sync, "load_config", lambda path: cfg)
+    monkeypatch.setattr(sync, "NotionClient", lambda token: object())
+    monkeypatch.setattr(sync, "sync_database", fake_sync_database)
+    monkeypatch.setattr(sys, "argv", ["sync.py"])
+    with pytest.raises(SystemExit) as exc:
+        sync.main()
+    assert exc.value.code == 1
+    assert seen == ["a", "b"]
+
+
+# --- optional snapshot step: one scheduled task does sync and snapshot ---
+
+def _run_main_with_snapshot(monkeypatch, tmp_path, snap_dir):
+    import sync
+    cfg = {"token": "x",
+           "output": {"db_path": str(tmp_path / "t.db"), "snapshot_dir": str(snap_dir), "snapshot_keep": 2},
+           "databases": [{"name": "a", "database_id": "1"}]}
+    monkeypatch.setattr(sync, "load_config", lambda path: cfg)
+    monkeypatch.setattr(sync, "NotionClient", lambda token: object())
+    monkeypatch.setattr(sync, "sync_database", lambda *a, **k: True)
+    monkeypatch.setattr(sys, "argv", ["sync.py"])
+    sync.main()
+
+
+def test_main_writes_snapshot_when_configured(monkeypatch, tmp_path, caplog):
+    import logging
+    import sqlite3
+    caplog.set_level(logging.INFO)
+    # a real DB file so make_snapshot has something to copy and verify
+    from storage import Storage
+    s = Storage(str(tmp_path / "t.db")); s.ensure_meta_table(); s.set_meta("last_sync:a", "2026-11-16T00:00:00+00:00"); s.close()
+    snap = tmp_path / "snaps"
+    _run_main_with_snapshot(monkeypatch, tmp_path, snap)
+    files = list(snap.glob("*.db"))
+    assert len(files) == 1
+    assert sqlite3.connect(files[0]).execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert "Snapshot written" in caplog.text and "Sync complete" in caplog.text
+
+
+def test_main_exits_one_when_snapshot_fails(monkeypatch, tmp_path, caplog):
+    import pytest
+    # no database file is ever created (sync_database is stubbed), so the snapshot cannot be made
+    with pytest.raises(SystemExit) as exc:
+        _run_main_with_snapshot(monkeypatch, tmp_path, tmp_path / "snaps")
+    assert exc.value.code == 1
+    assert "Snapshot failed" in caplog.text and "Sync complete" not in caplog.text

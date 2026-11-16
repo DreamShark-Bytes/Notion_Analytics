@@ -162,3 +162,19 @@ def test_main_snooze_suppresses_toast(tmp_path, monkeypatch):
     assert main(["--db", str(db), "--snooze-hours", "48"]) == 0
     assert main(["--db", str(db)]) == 1
     assert calls == []
+
+
+def test_damaged_copy_with_fresh_meta_is_reported(tmp_path):
+    """`_meta` can be intact while a data page is destroyed; only a full-page check notices."""
+    db = tmp_path / "n.db"
+    conn = sqlite3.connect(db)
+    conn.execute('CREATE TABLE "_meta" (key TEXT PRIMARY KEY, value TEXT)')
+    conn.execute('INSERT INTO "_meta" VALUES (?, ?)', ("last_sync:tasks", datetime.now(timezone.utc).isoformat()))
+    conn.execute("CREATE TABLE big (x TEXT)")
+    conn.executemany("INSERT INTO big VALUES (?)", [("y" * 500,)] * 400)
+    conn.commit()
+    conn.close()
+    with open(db, "r+b") as f:  # overwrite one 4 KiB page that belongs to `big`
+        f.seek(4096 * 20)
+        f.write(b"\xff" * 4096)
+    assert main(["--db", str(db), "--notify", "none"]) == 1

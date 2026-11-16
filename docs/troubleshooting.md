@@ -22,6 +22,9 @@ The property was deleted or renamed in Notion. The SQLite column and its history
 **`Property '<Name>' changed type '<old>' → '<new>'`**
 Expected after you change a property's type in Notion. The old values are kept in a `<column>_bak_YYYYMMDD` column. See [Changed property type](reference.md#changed-property-type).
 
+**Windows says "part of this app has been blocked ... pip.exe"**
+Windows Security blocks the small `pip.exe` launcher because it is unsigned. Run pip through Python instead, which is the same installer: `venv\Scripts\python.exe -m pip install -r requirements.txt`. Do not turn off Smart App Control to get around it; it cannot be switched back on without resetting Windows.
+
 ## Data looks wrong
 
 **Columns missing in Power BI**

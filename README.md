@@ -33,7 +33,7 @@ flowchart LR
 git clone https://github.com/DreamShark-Bytes/Notion_Analytics.git
 cd Notion_Analytics
 python -m venv venv
-venv/bin/pip install -r requirements.txt        # Windows: venv\Scripts\pip
+venv/bin/python -m pip install -r requirements.txt        # Windows: venv\Scripts\python.exe -m pip
 cp config_example.toml config.toml              # add your Notion token and a database ID
 venv/bin/python sync.py                         # Windows: venv\Scripts\python
 ```

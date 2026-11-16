@@ -19,10 +19,10 @@ cd Notion_Analytics
 python -m venv venv
 
 # Linux / macOS
-venv/bin/pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements.txt
 
 # Windows
-venv\Scripts\pip install -r requirements.txt
+venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 `requirements.txt` pins the Notion_API client to a specific release tag. Do not call the Notion REST API directly from your own code in this project; everything goes through that client.
@@ -128,7 +128,7 @@ See [Connecting Power BI and Grafana](connecting-bi-tools.md). Point them at a l
 ## Developer setup: running the tests
 
 ```bash
-venv/bin/pip install -r requirements.txt     # includes pytest
+venv/bin/python -m pip install -r requirements.txt     # includes pytest
 venv/bin/python -m pytest tests/ -q
 ```
 

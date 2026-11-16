@@ -82,7 +82,8 @@ Task Scheduler shows the exit code as "Last Run Result", so a failing task is vi
 
 ## Scheduling
 
-- **`make`:** schedule it on the machine that owns the database, a few minutes after the hourly sync. It is safe if the two overlap.
+- **`make`, simplest:** let the sync do it. Add `snapshot_dir` (and optionally `snapshot_keep`, default 3) to the `[output]` section of `config.toml`; `sync.py` then writes a verified snapshot after every run, even when a database failed, and exits 1 if the snapshot itself fails. One scheduled task on the owning machine does both.
+- **`make`, separate task:** only if you want snapshots on a different schedule from the sync. Schedule it a few minutes after the hourly sync; it is safe if the two overlap.
 - **`fetch`:** schedule it on the reader machine, a few minutes after `make`. On Windows, set the task to **Run whether user is logged on or not** so it still runs when nobody is signed in. A task limited to "only when user is logged on" silently skips runs.
 - Pair it with the [Stale-Data Alert](stale-data-alert.md) (`tools/check_freshness.py`) so a copy that stops updating is noticed.
 

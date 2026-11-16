@@ -14,6 +14,7 @@ import logging
 import time
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 
@@ -362,7 +363,8 @@ def sync_database(
     content_fetch_delay_ms: int = 0,
     detect_deleted: bool = False,
     all_db_cfgs: list[dict] | None = None,
-):
+) -> bool:
+    """Sync one database. Returns False if it could not be synced (schema fetch or query failed)."""
     db_id = db_cfg["database_id"]
     table = db_cfg["name"]
     include_cols: list[str] = _db_cfg(db_cfg, "include_columns", [])
@@ -385,7 +387,7 @@ def sync_database(
         db_schema = client.get_database(db_id)
     except Exception as e:
         logger.error(f"[{table}] Failed to fetch database schema: {e}")
-        return
+        return False
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -418,7 +420,7 @@ def sync_database(
         pages = client.query_database(db_id, filter_payload=None if detect_deleted else filter_payload)
     except Exception as e:
         logger.error(f"[{table}] Failed to query database: {e}")
-        return
+        return False
 
     notion_ids = {p["id"] for p in pages}
     if detect_deleted and cutoff:
@@ -545,11 +547,25 @@ def sync_database(
         f"{changes_recorded} changes recorded, "
         f"{comments_synced} comments synced."
     )
+    return True
 
 
 # ------------------------------------------------------------------ #
 #  Main
 # ------------------------------------------------------------------ #
+
+def _publish_snapshot(db_path: str, snapshot_dir: str, keep: int) -> bool:
+    """Write a verified snapshot of the database for another machine to fetch. Never raises."""
+    sys.path.insert(0, str(Path(__file__).parent / "tools"))
+    try:
+        from db_snapshot import make_snapshot
+        path = make_snapshot(Path(db_path), Path(snapshot_dir), keep)
+    except Exception as e:  # SnapshotError, or the tool cannot be imported
+        logger.error(f"Snapshot failed: {e}")
+        return False
+    logger.info(f"Snapshot written: {path}")
+    return True
+
 
 def main():
     parser = argparse.ArgumentParser(description="Notion → Power BI sync")
@@ -574,6 +590,8 @@ def main():
     export_csv = output_cfg.get("export_csv", False)
     csv_dir = output_cfg.get("csv_dir", "exports")
     content_fetch_delay_ms: int = output_cfg.get("content_fetch_delay_ms", 0)
+    snapshot_dir = output_cfg.get("snapshot_dir")  # optional: publish a snapshot after every run
+    snapshot_keep: int = output_cfg.get("snapshot_keep", 3)
 
     databases = cfg.get("databases", [])
     if not databases:
@@ -588,23 +606,33 @@ def main():
     logger.info(f"Sync started at {start.isoformat()}")
     logger.info(f"Output: {db_path}")
 
+    failed: list[str] = []
     for db_cfg in databases:
         try:
-            sync_database(
+            ok = sync_database(
                 client, db_cfg, storage, full=args.full,
                 content_fetch_delay_ms=content_fetch_delay_ms,
                 detect_deleted=args.detect_deleted, all_db_cfgs=databases,
             )
         except Exception as e:
             logger.error(f"Unexpected error syncing '{db_cfg.get('name')}': {e}", exc_info=True)
+            ok = False
+        if not ok:
+            failed.append(str(db_cfg.get("name")))
 
         if export_csv:
             storage.export_csv(db_cfg["name"], csv_dir)
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-    logger.info(f"Sync complete in {elapsed:.1f}s")
-
     storage.close()
+
+    snapshot_ok = _publish_snapshot(db_path, snapshot_dir, snapshot_keep) if snapshot_dir else True
+
+    if failed:
+        logger.error(f"Sync finished with {len(failed)} failed database(s) in {elapsed:.1f}s: {', '.join(failed)}")
+    if failed or not snapshot_ok:
+        sys.exit(1)
+    logger.info(f"Sync complete in {elapsed:.1f}s")
 
 
 if __name__ == "__main__":

@@ -26,8 +26,8 @@ git pull
 Reinstall dependencies in case `requirements.txt` changed:
 
 ```bash
-venv/bin/pip install -r requirements.txt    # Linux
-venv\Scripts\pip install -r requirements.txt   # Windows
+venv/bin/python -m pip install -r requirements.txt    # Linux
+venv\Scripts\python.exe -m pip install -r requirements.txt   # Windows
 ```
 
 Check that the Notion client in the virtual environment is the version `requirements.txt` pins (the tag after `@`):

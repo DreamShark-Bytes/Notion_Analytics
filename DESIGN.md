@@ -92,6 +92,7 @@ Why: when a property's type is changed in Notion, Notion converts the values and
 How (`sync._compare_schema`, `storage.backup_column` / `restore_backup`):
 - Detection compares `_schema.property_type` (what we stored last sync) with the type Notion reports now, keyed by `property_id`.
 - On a change, `<col>` in `<table>_pages` is renamed to `<col>_bak_YYYYMMDD` (suffix `_2`, `_3` if taken) and one `_backups` row is written (table, column, backup column, old type; primary key table + column + type). A new `<col>` is created on the next synced page row.
+- `Storage.upsert_page` is an `INSERT ... ON CONFLICT(page_id) DO UPDATE`, not `INSERT OR REPLACE` (changed 2026-11-15): a re-fetched page keeps backup columns and columns of properties deleted in Notion, which a row replace would have set to NULL. It clears `deleted_at`, `delete_state` and `moved_to` explicitly, because a fetched page is live.
 - If the property later returns to a type that has a backup, the new column is dropped and the backup is renamed back.
 - Backups stay indefinitely. No tool removes a tracked backup column or its `_backups` row: `tools/cleanup_orphaned_columns.py` skips columns listed in `_backups` (checked in code 2026-11-15), although the sync warning tells the user to run it. `_changes` is never backed up (its columns are TEXT).
 - Separate from this: `tools/migrate_column.py` and `tools/split_date_columns.py` copy the whole database to a `.bak` file before they run, and `tools/db_snapshot.py` makes consistent copies for the PC. Those are file-level backups, not column backups.
