@@ -40,7 +40,8 @@ _TOAST_PS = r"""
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 $esc = { param($s) [System.Security.SecurityElement]::Escape($s) }
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml("<toast scenario='reminder'><visual><binding template='ToastGeneric'><text>$(& $esc $env:NA_TOAST_TITLE)</text><text>$(& $esc $env:NA_TOAST_BODY)</text></binding></visual><actions><action content='Dismiss' arguments='dismiss' activationType='system'/></actions></toast>")
+$lines = ($env:NA_TOAST_BODY -split "`n") | ForEach-Object { "<text>$(& $esc $_)</text>" }
+$xml.LoadXml("<toast scenario='reminder'><visual><binding template='ToastGeneric'><text>$(& $esc $env:NA_TOAST_TITLE)</text>$($lines -join '')</binding></visual><actions><action content='Dismiss' arguments='dismiss' activationType='system'/></actions></toast>")
 $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
 $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
@@ -75,6 +76,18 @@ def evaluate(last_syncs: dict[str, str], now: datetime, max_age: timedelta) -> d
 def _fmt_age(age: timedelta) -> str:
     hours = age.total_seconds() / 3600
     return f"{hours / 24:.1f} days" if hours >= 48 else f"{hours:.0f} hours"
+
+
+def toast_lines(problems: dict[str, str], max_lines: int = 2) -> list[str]:
+    """One line per distinct problem, identical messages grouped; a toast shows a title plus two body lines."""
+    groups: dict[str, list[str]] = {}
+    for table, msg in problems.items():
+        groups.setdefault(msg, []).append(table)
+    lines = [f"{tables[0]}: {msg}" if len(tables) == 1 else f"{len(tables)} tables: {msg}"
+             for msg, tables in groups.items()]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [f"+{len(lines) - max_lines + 1} more problems"]
+    return lines
 
 
 def should_notify(state: dict, problems: dict[str, str], now: datetime, realert: timedelta) -> bool:
@@ -175,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         body = "; ".join(f"{t}: {msg}" for t, msg in problems.items())
         print(f"STALE - {body}")
         if args.notify == "toast" and should_notify(state, problems, now, timedelta(hours=args.realert_hours)):
-            show_toast("Notion Analytics data is stale", body)
+            show_toast("Notion Analytics data is stale", "\n".join(toast_lines(problems)))
             state["last_alert"] = now.isoformat()
             state["alerting"] = sorted(problems)
     else:

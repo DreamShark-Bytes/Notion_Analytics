@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from check_freshness import evaluate, main, parse_timestamp, read_last_syncs, should_notify
+from check_freshness import evaluate, main, parse_timestamp, read_last_syncs, should_notify, toast_lines
 
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
 MAX_AGE = timedelta(hours=30)
@@ -178,3 +178,14 @@ def test_damaged_copy_with_fresh_meta_is_reported(tmp_path):
         f.seek(4096 * 20)
         f.write(b"\xff" * 4096)
     assert main(["--db", str(db), "--notify", "none"]) == 1
+
+
+def test_toast_lines_groups_identical_messages():
+    problems = {f"t{i}": "last synced 14 hours ago" for i in range(7)}
+    assert toast_lines(problems) == ["7 tables: last synced 14 hours ago"]
+
+
+def test_toast_lines_one_line_per_distinct_problem_and_caps():
+    problems = {"a": "last synced 14 hours ago", "b": "last synced 20 hours ago", "c": "unreadable sync timestamp 'x'"}
+    lines = toast_lines(problems)
+    assert lines == ["a: last synced 14 hours ago", "+2 more problems"]
