@@ -31,3 +31,4 @@ dbt/dbt_packages/
 
 # Parquet export output
 data/parquet/
+tests/e2e/sandbox_page.txt

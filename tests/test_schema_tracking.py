@@ -399,3 +399,23 @@ def test_backfill_skips_already_matching_names():
 
     count = s.backfill_option_names("tasks")
     assert count == 0
+
+
+def test_upsert_page_keeps_columns_the_new_row_does_not_list():
+    """A re-fetched page must not lose backup columns or columns of properties deleted in Notion."""
+    storage = Storage(":memory:")
+    storage.ensure_pages_table("t", {"page_id": "p1", "name": "a", "num": 5, "link": "x"})
+    storage.upsert_page("t", {"page_id": "p1", "name": "a", "num": 5, "link": "x"})
+    storage.backup_column("t", "num", "20261116")
+    storage.ensure_pages_table("t", {"page_id": "p1", "name": "b", "num": "5"})
+    storage.upsert_page("t", {"page_id": "p1", "name": "b", "num": "5"})  # no `link`, no backup column
+    row = storage.get_page("t", "p1")
+    assert (row["name"], row["num"], row["num_bak_20261116"], row["link"]) == ("b", "5", 5, "x")
+
+
+def test_upsert_page_overwrites_a_value_cleared_in_notion():
+    storage = Storage(":memory:")
+    storage.ensure_pages_table("t", {"page_id": "p1", "text": "old"})
+    storage.upsert_page("t", {"page_id": "p1", "text": "old"})
+    storage.upsert_page("t", {"page_id": "p1", "text": None})
+    assert storage.get_page("t", "p1")["text"] is None

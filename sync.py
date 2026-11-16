@@ -498,7 +498,7 @@ def sync_database(
             changes_recorded += len(changes)
 
             # A page we had marked deleted is back (restored, or moved in from elsewhere).
-            # The upsert below clears its delete columns; record that it came back.
+            # upsert_page clears its delete columns; record that it came back.
             if prev_row and prev_row.get("deleted_at"):
                 storage.record_change(
                     table, page_id, "delete_state", prev_row.get("delete_state"), None, now, now

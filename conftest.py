@@ -16,3 +16,7 @@ _mock.extract_content = MagicMock(return_value="")
 _mock.extract_comments = MagicMock(return_value=[])
 _mock.NotionClient = MagicMock()
 sys.modules.setdefault("notion_api", _mock)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "e2e: runs against a real Notion sandbox; needs NOTION_E2E_CONFIG (see tests/e2e)")

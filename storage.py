@@ -217,14 +217,21 @@ class Storage:
         return {row["name"] for row in cur.fetchall()}
 
     def upsert_page(self, table: str, row: dict):
-        cols = [c for c in row if c in self._known_cols.get(table, set())]
+        known = self._known_cols.get(table, set())
+        # A fetched page is live, so the delete marks are cleared (a restored or moved-in page comes back this way).
+        row = {**{c: None for c in _DELETION_COLS if c in known}, **row}
+        cols = [c for c in row if c in known]
         if not cols:
             return
         placeholders = ", ".join("?" for _ in cols)
         col_list = ", ".join(f'"{c}"' for c in cols)
         values = [row[c] for c in cols]
+        # An UPSERT, not INSERT OR REPLACE: REPLACE deletes the row first, which would set every column not
+        # in `row` (backups like <col>_bak_YYYYMMDD, columns of properties deleted in Notion) back to NULL.
+        updates = ", ".join(f'"{c}" = excluded."{c}"' for c in cols if c != "page_id")
         self.conn.execute(
-            f'INSERT OR REPLACE INTO "{table}_pages" ({col_list}) VALUES ({placeholders})',
+            f'INSERT INTO "{table}_pages" ({col_list}) VALUES ({placeholders}) '
+            + (f'ON CONFLICT("page_id") DO UPDATE SET {updates}' if updates else 'ON CONFLICT("page_id") DO NOTHING'),
             values,
         )
         self.conn.commit()
