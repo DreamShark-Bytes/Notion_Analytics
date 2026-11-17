@@ -47,6 +47,10 @@ Verify the file path in your ODBC DSN matches the actual `.db` file location. If
 **The copy is stale, corrupt, or fails `PRAGMA integrity_check`**
 A plain file copy of a live WAL database is unsafe. See [Backups and Database Copies](backup-and-snapshots.md), and set up the [Stale-Data Alert](stale-data-alert.md) so a copy that stops updating is noticed.
 
+**A scheduled task stops running after a day, or the history says "completed" but nothing happened**
+- The Task Scheduler window defaults "Repeat task every 1 hour" to "for a duration of: 1 day", and the repeating silently stops 24 hours after the trigger's start time (`Get-ScheduledTask -TaskName "<name>" | ForEach-Object { $_.Triggers.Repetition } | Format-List Interval, Duration` shows `P1D`). Set the duration to **Indefinitely**.
+- The history's "completed" and "finished" lines appear for any exit code. Read the code on event 201 or `Get-ScheduledTaskInfo -TaskName "<name>" | Format-List LastRunTime, LastTaskResult`. Codes like 2147942403 (0x80070003) are Windows errors, not ours (ours are 0, 1, 2, 3). They appeared when the task's Program was the Microsoft Store alias `...\AppData\Local\Microsoft\WindowsApps\python.exe`. Use the real interpreter instead: run `python -c "import sys; print(sys.executable)"` and use that path (`pythonw.exe` beside it for the alert, which opens no window).
+
 **The fetch says `IN USE` (exit code 3), or the copy never updates while a program is open**
 Another program has the destination `.db` open, so Windows refuses to replace it. The old copy is kept and the next scheduled run retries, so the copy goes stale for as long as the program holds the file. Known culprits:
 - **DBeaver** (or another DB browser) with a SQLite connection that is still connected. An idle connection still holds the file. Right-click the connection and choose **Disconnect**; you do not need to close the program.

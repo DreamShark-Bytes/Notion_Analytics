@@ -86,7 +86,7 @@ Task Scheduler stores the exit code as the task's last result (`Get-ScheduledTas
 
 - **`make`, simplest:** let the sync do it. Add `snapshot_dir` (and optionally `snapshot_keep`, default 3) to the `[output]` section of `config.toml`; `sync.py` then writes a verified snapshot after every run, even when a database failed, and exits 1 if the snapshot itself fails. One scheduled task on the owning machine does both.
 - **`make`, separate task:** only if you want snapshots on a different schedule from the sync. Schedule it a few minutes after the hourly sync; it is safe if the two overlap.
-- **`fetch`:** schedule it on the reader machine, a few minutes after `make`. On Windows, set the task to **Run whether user is logged on or not** so it still runs when nobody is signed in. A task limited to "only when user is logged on" silently skips runs.
+- **`fetch`:** schedule it on the reader machine, a few minutes after `make`. On Windows, set the task to **Run whether user is logged on or not** so it still runs when nobody is signed in. A task limited to "only when user is logged on" silently skips runs. In the Task Scheduler window, set the trigger's "Repeat task every 1 hour" to "for a duration of: **Indefinitely**". The default is 1 day, and the repeat silently stops 24 hours after the trigger's start time (the history shows no runs after that).
 - Pair it with the [Stale-Data Alert](stale-data-alert.md) (`tools/check_freshness.py`) so a copy that stops updating is noticed.
 
 ## A one-off backup without the tool
