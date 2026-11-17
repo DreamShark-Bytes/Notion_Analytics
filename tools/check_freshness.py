@@ -164,6 +164,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="Alert state file (default: <db>.freshness.json next to the database)")
     ap.add_argument("--notify", choices=["toast", "none"], default="toast",
                     help="How to alert (default toast); 'none' only prints")
+    ap.add_argument("--suppress-success", action="store_true",
+                    help="Print nothing when everything is fresh (stale results are still printed)")
+    ap.add_argument("--recovery-toast", action="store_true",
+                    help="Also show a 'fresh again' toast once when a stale copy recovers (default: off)")
     args = ap.parse_args(argv)
 
     state_path = args.state_file or args.db.with_name(args.db.name + ".freshness.json")
@@ -192,8 +196,9 @@ def main(argv: list[str] | None = None) -> int:
             state["last_alert"] = now.isoformat()
             state["alerting"] = sorted(problems)
     else:
-        print("OK - all databases are fresh")
-        if state.get("alerting") and args.notify == "toast":
+        if not args.suppress_success:
+            print("OK - all databases are fresh")
+        if state.get("alerting") and args.notify == "toast" and args.recovery_toast:
             show_toast("Notion Analytics data is fresh again", "The database copy is up to date.")
         state.pop("alerting", None)
         state.pop("last_alert", None)

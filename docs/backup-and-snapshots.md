@@ -66,6 +66,8 @@ python tools/db_snapshot.py fetch --src-dir \\sync-host\Notion_Snapshots --dest 
 |---|---|
 | `--src-dir` | Folder holding the snapshots, for example the share the other machine publishes to (required) |
 | `--dest` | The local `notion_analytics.db` to replace (required) |
+| `--log` | Optional file that gets one line per run (time, command, exit code, message). Also records bad-arguments runs (`usage`, exit 2) with the error. Scheduled tasks discard their output, so use this on the reader machine |
+| `--log-days N` | Days of log history kept (default 60); older lines are dropped on each run, so the file stays small. `make` accepts both options too |
 
 What it does: copies the newest snapshot to a temporary file beside `--dest`, runs the same checks, and replaces `--dest` only if the snapshot is newer than the current copy (by `last_sync`). After the swap it removes stale `-wal`, `-shm` and `-journal` files beside `--dest`. If anything fails, the existing copy is left untouched.
 
@@ -76,9 +78,9 @@ What it does: copies the newest snapshot to a temporary file beside `--dest`, ru
 | 0 | `OK` | Done, or "already up to date" |
 | 1 | `FAILED` | Nothing was published or installed. The message says why |
 | 2 | (usage text) | Bad or missing arguments |
-| 3 | `IN USE` | `--dest` is open in another program (for example Power BI). The old copy is kept; try again later |
+| 3 | `IN USE` | `--dest` is open in another program (for example a connected DB browser or Power BI). The old copy is kept; try again later |
 
-Task Scheduler shows the exit code as "Last Run Result", so a failing task is visible there.
+Task Scheduler stores the exit code as the task's last result (`Get-ScheduledTaskInfo -TaskName "<name>" | Select-Object LastRunTime, LastTaskResult`; the History tab only says "completed" for any code). It keeps only the latest run, so add `--log` to keep the message for every run.
 
 ## Scheduling
 
@@ -122,5 +124,5 @@ Healthy output is `ok` followed by one `last_sync:<table>` line per synced datab
 | `FAILED - ...: no last_sync timestamps in _meta` | The database has never completed a sync, so there is nothing to verify. Run `sync.py` once first |
 | `FAILED - ...: integrity_check failed` | The source database is damaged. Do not publish it; restore from an earlier snapshot |
 | `FAILED - no snapshot found in ...` | `make` has not run yet, or `--src-dir` is wrong |
-| `IN USE` (exit 3) | Close the program holding the destination (Power BI Desktop, a DB browser) and let the next scheduled run retry |
+| `IN USE` (exit 3) | Disconnect or close the program holding the destination (a connected DBeaver or other DB browser, Power BI Desktop) and let the next scheduled run retry; see [Troubleshooting](troubleshooting.md) |
 | Copy is stale but the task shows success | Compare the `last_sync` lines from "Checking a database" on both machines. If `make` is succeeding but the reader is old, `fetch` is not running (check that the task is set to run when logged off) |

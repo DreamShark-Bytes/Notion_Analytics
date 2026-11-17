@@ -15,6 +15,6 @@ Create it as its own Task Scheduler task, separate from whatever copies the file
 - **Triggers:** At log on, plus repeat every few hours.
 - Exit code 1 (stale) appears as the task's "Last Run Result".
 
-Repeated alerts are limited by `--realert-hours` (default 24), and a "fresh again" toast is shown once on recovery. `--snooze-hours N` silences alerts for a planned shutdown. `--notify none` prints the result without a toast, which is useful for a first manual run.
+Repeated alerts are limited by `--realert-hours` (default 24), and no toast is shown when a stale copy recovers (add `--recovery-toast` to get one "fresh again" toast). `--snooze-hours N` silences alerts for a planned shutdown. `--notify none` prints the result without a toast, which is useful for a first manual run. `--suppress-success` hides the "OK - all databases are fresh" line (stale results still print), which keeps manual or logged runs short.
 
 To make the copy itself reliable, use the snapshot tool rather than a plain file copy: see [Backups and Database Copies](backup-and-snapshots.md).

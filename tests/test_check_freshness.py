@@ -147,8 +147,25 @@ def test_main_recovery_toast_then_clears_state(tmp_path, monkeypatch):
     conn.execute('UPDATE "_meta" SET value = ?', (datetime.now(timezone.utc).isoformat(),))
     conn.commit()
     conn.close()
-    assert main(["--db", str(db)]) == 0
+    assert main(["--db", str(db), "--recovery-toast"]) == 0
     assert len(calls) == 2 and "fresh again" in calls[1]
+    state = json.loads((tmp_path / "n.db.freshness.json").read_text())
+    assert "alerting" not in state
+
+
+def test_main_recovery_is_silent_by_default_but_still_clears_state(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr("check_freshness.show_toast", lambda t, b: calls.append(t))
+    db = tmp_path / "n.db"
+    old = (datetime.now(timezone.utc) - timedelta(hours=60)).isoformat()
+    _make_db(db, [("last_sync:tasks", old)])
+    main(["--db", str(db)])
+    conn = sqlite3.connect(db)
+    conn.execute('UPDATE "_meta" SET value = ?', (datetime.now(timezone.utc).isoformat(),))
+    conn.commit()
+    conn.close()
+    assert main(["--db", str(db)]) == 0
+    assert len(calls) == 1
     state = json.loads((tmp_path / "n.db.freshness.json").read_text())
     assert "alerting" not in state
 
@@ -189,3 +206,14 @@ def test_toast_lines_one_line_per_distinct_problem_and_caps():
     problems = {"a": "last synced 14 hours ago", "b": "last synced 20 hours ago", "c": "unreadable sync timestamp 'x'"}
     lines = toast_lines(problems)
     assert lines == ["a: last synced 14 hours ago", "+2 more problems"]
+
+
+def test_main_suppress_success_hides_ok_line_but_not_stale_line(tmp_path, capsys):
+    db = tmp_path / "n.db"
+    _make_db(db, [("last_sync:tasks", datetime.now(timezone.utc).isoformat())])
+    assert main(["--db", str(db), "--suppress-success", "--notify", "none"]) == 0
+    assert capsys.readouterr().out == ""
+    old = (datetime.now(timezone.utc) - timedelta(hours=60)).isoformat()
+    _make_db(tmp_path / "o.db", [("last_sync:tasks", old)])
+    assert main(["--db", str(tmp_path / "o.db"), "--suppress-success", "--notify", "none"]) == 1
+    assert "STALE" in capsys.readouterr().out

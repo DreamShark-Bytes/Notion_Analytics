@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from db_snapshot import (
@@ -11,6 +11,7 @@ from db_snapshot import (
     main,
     make_snapshot,
     verify_database,
+    write_log,
 )
 
 T0 = datetime(2026, 11, 12, 18, 0, 0, tzinfo=timezone.utc)
@@ -259,3 +260,67 @@ def test_cli_destination_in_use_exits_3(live, tmp_path, monkeypatch):
     dest.write_bytes(b"x")
     monkeypatch.setattr(os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError("locked")))
     assert main(["fetch", "--src-dir", str(out), "--dest", str(dest)]) == 3
+
+
+# ── Run log (--log) ───────────────────────────────────────────────────────────
+
+def test_log_records_success_failure_and_in_use(live, tmp_path, monkeypatch):
+    path, conn = live
+    out = tmp_path / "share"
+    _publish(path, out, 1, "2026-11-12T18:01:00+00:00")
+    dest = tmp_path / "pc" / "notion_analytics.db"
+    log = tmp_path / "logs" / "fetch.log"
+    assert main(["fetch", "--src-dir", str(out), "--dest", str(dest), "--log", str(log)]) == 0
+    assert main(["fetch", "--src-dir", str(tmp_path / "none"), "--dest", str(dest), "--log", str(log)]) == 1
+    _publish(path, out, 2, "2026-11-12T18:02:00+00:00")
+    real_replace = os.replace
+    monkeypatch.setattr(os, "replace", lambda s, d: (_ for _ in ()).throw(PermissionError("locked")) if str(d).endswith(".db") else real_replace(s, d))
+    assert main(["fetch", "--src-dir", str(out), "--dest", str(dest), "--log", str(log)]) == 3
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert [" ".join(ln.split(" ", 3)[1:3]) for ln in lines] == ["fetch exit=0", "fetch exit=1", "fetch exit=3"]
+    assert "OK - installed" in lines[0] and "FAILED" in lines[1] and "IN USE" in lines[2]
+
+
+def test_log_drops_lines_older_than_the_retention_window(tmp_path):
+    log = tmp_path / "fetch.log"
+    now = datetime(2026, 11, 17, 10, 0, 0, tzinfo=timezone.utc)
+    old = (now - timedelta(days=61)).isoformat(timespec="seconds")
+    recent = (now - timedelta(days=59)).isoformat(timespec="seconds")
+    log.write_text(f"{old} fetch exit=0 old\n{recent} fetch exit=0 recent\nnot a log line\n", encoding="utf-8")
+    write_log(log, "fetch", 0, "OK", keep_days=60, now=now)
+    text = log.read_text(encoding="utf-8")
+    assert " old" not in text and "recent" in text and "not a log line" in text
+    assert text.count("\n") == 3 and text.rstrip().endswith("fetch exit=0 OK")
+
+
+def test_log_records_usage_errors_with_the_message(tmp_path, capsys):
+    log = tmp_path / "fetch.log"
+    assert main(["fetch", "--log", str(log), "--dest", str(tmp_path / "d.db")]) == 2
+    line = log.read_text(encoding="utf-8")
+    assert " usage exit=2 " in line and "--src-dir" in line
+    assert "required" in capsys.readouterr().err
+
+
+def test_log_failure_never_changes_the_exit_code(live, tmp_path, capsys):
+    path, conn = live
+    out = tmp_path / "share"
+    log_dir = tmp_path / "is_a_folder"
+    log_dir.mkdir()
+    assert main(["make", "--db", str(path), "--out-dir", str(out), "--log", str(log_dir)]) == 0
+    assert "WARNING - could not write log" in capsys.readouterr().out
+
+
+def test_no_log_option_writes_no_file(live, tmp_path):
+    path, conn = live
+    main(["make", "--db", str(path), "--out-dir", str(tmp_path / "share")])
+    assert not list(tmp_path.glob("**/*.log"))
+
+
+def test_log_survives_naive_timestamps_bom_and_binary_junk(tmp_path):
+    log = tmp_path / "fetch.log"
+    now = datetime(2026, 11, 17, 10, 0, 0, tzinfo=timezone.utc)
+    log.write_bytes("\ufeff2020-01-01T00:00:00 fetch exit=0 naive and ancient\n".encode("utf-8") + b"\xff\xfe junk\n")
+    write_log(log, "fetch", 0, "OK", keep_days=60, now=now)
+    text = log.read_text(encoding="utf-8")
+    assert "ancient" not in text and "junk" in text and text.rstrip().endswith("fetch exit=0 OK")
+    assert not (tmp_path / "fetch.log.tmp").exists()

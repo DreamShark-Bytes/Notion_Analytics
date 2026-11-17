@@ -46,3 +46,11 @@ Verify the file path in your ODBC DSN matches the actual `.db` file location. If
 
 **The copy is stale, corrupt, or fails `PRAGMA integrity_check`**
 A plain file copy of a live WAL database is unsafe. See [Backups and Database Copies](backup-and-snapshots.md), and set up the [Stale-Data Alert](stale-data-alert.md) so a copy that stops updating is noticed.
+
+**The fetch says `IN USE` (exit code 3), or the copy never updates while a program is open**
+Another program has the destination `.db` open, so Windows refuses to replace it. The old copy is kept and the next scheduled run retries, so the copy goes stale for as long as the program holds the file. Known culprits:
+- **DBeaver** (or another DB browser) with a SQLite connection that is still connected. An idle connection still holds the file. Right-click the connection and choose **Disconnect**; you do not need to close the program.
+- **Power BI Desktop** while it refreshes or has the file loaded through ODBC. Close it, or refresh and then close.
+- A Python or other script that opened the file and was never closed.
+
+To find the holder: open **Resource Monitor** (Windows search "resmon"), go to **CPU**, expand **Associated Handles**, and search for `notion_analytics.db`. To avoid the problem, point DBeaver and similar tools at a separate copy of the file, not at the fetch destination, and keep connections read-only. After releasing the file, run `python C:\Scripts\db_snapshot.py fetch ...` by hand; it prints `OK` when it installs the new copy. See [Backups and Database Copies](backup-and-snapshots.md) for the exit codes.
