@@ -32,6 +32,8 @@ except ImportError:
 
 _SYSTEM_COLS = {
     "page_id", "created_time", "last_edited_time", "url", "content_text",
+    # added by `sync.py --detect-deleted` (storage._DELETION_COLS); not Notion properties, never orphans
+    "deleted_at", "delete_state", "moved_to",
 }
 
 

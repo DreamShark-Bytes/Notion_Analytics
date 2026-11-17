@@ -97,8 +97,7 @@ def _do_backup(
     logger.warning(
         f"[{table}] Property '{prop_name}' changed type "
         f"'{stored_type}' → '{prop_type}'. "
-        f"Old data preserved in '{backup_name}'. "
-        f"Run tools/cleanup_orphaned_columns.py to remove it when satisfied."
+        f"Old data preserved in '{backup_name}' (kept indefinitely)."
     )
 
 
@@ -178,7 +177,7 @@ def _compare_schema(
             logger.warning(
                 f"[{table}] Column '{entry['column_name']}' (Notion property '{entry['property_name']}') "
                 f"no longer exists in the Notion schema — it may have been deleted or renamed. "
-                f"Run tools/cleanup_orphaned_columns.py to remove it."
+                f"The column and its history are kept in SQLite and no longer updated."
             )
 
     return id_shadow_cols

@@ -6,13 +6,13 @@ The sync is meant to run unattended. An hourly run is an *incremental* sync (onl
 
 1. Open **Task Scheduler** → **Create Task** (not "Create Basic Task")
 2. **General tab:** Name: `Notion Analytics Sync` · Description: `Syncs Notion databases to a local SQLite file for use with Power BI and Grafana.`
-3. **Triggers tab:** New → On a schedule → Daily → check **Repeat task every: 1 hour** for duration **Indefinitely**
+3. **Triggers tab:** New → On a schedule → **One time** → start at the next top of the hour → check **Repeat task every: 1 hour** for duration **Indefinitely** (a Daily trigger plus an indefinite repeat gave duplicate launches and a "launch request ignored" warning every hour on the author's machine, so use One time; a duration of 1 day silently stops the repeat after 24 hours)
 4. **Actions tab:** New → Start a program
    - **Program/script:** `C:\Users\YourName\Documents\Notion_Analytics\venv\Scripts\python.exe`
    - **Add arguments:** `sync.py`
    - **Start in:** `C:\Users\YourName\Documents\Notion_Analytics`
 5. **Conditions tab:** uncheck "Start the task only if the computer is on AC power" if on battery
-6. **Settings tab:** check "If the task is already running, do not start a new instance"
+6. **Settings tab:** check "If the task is already running, do not start a new instance" and "Stop the task if it runs longer than" **1 hour**
 7. Click OK → right-click the task → **Run** once → check `notion_analytics.log`
 
 ## Linux — cron

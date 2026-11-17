@@ -11,7 +11,7 @@ It also runs SQLite's `PRAGMA quick_check` on the copy, so a damaged file is rep
 Create it as its own Task Scheduler task, separate from whatever copies the file, so it still fires when the copy task never runs:
 
 - **Run only when user is logged on** (a toast cannot be shown from a SYSTEM or logged-off task).
-- **Program:** the full path to `pythonw.exe` (not `python.exe`, which opens a console window). **Arguments:** the script path and `--db ...`.
+- **Program:** the full path to `pythonw.exe` (not `python.exe`, which opens a console window), and the real interpreter, not the Microsoft Store alias in `...\AppData\Local\Microsoft\WindowsApps\` (find it with `python -c "import sys; print(sys.executable)"`; the alias returned Windows error codes inside scheduled tasks, see [Troubleshooting](troubleshooting.md)). **Arguments:** the script path and `--db ...`.
 - **Triggers:** At log on, plus repeat every few hours.
 - Exit code 1 (stale) appears as the task's "Last Run Result".
 
