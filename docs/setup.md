@@ -40,13 +40,19 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 cp config_example.toml config.toml
 ```
 
-`config.toml` holds your token and is git-ignored. Never commit it or paste it anywhere.
+Create `config_secrets.toml` next to it with one line, your Notion token (see below). It is git-ignored, like `config.toml`. Never commit either file or paste the token anywhere. `sync.py --secrets PATH` points at another location. A `token` line left in `config.toml` still works but logs a warning.
 
 Find each database ID in its Notion URL (the 32-character part before `?v=`). The smallest working config:
 
+`config_secrets.toml`:
+
 ```toml
 token = "ntn_your_token_here"
+```
 
+`config.toml`:
+
+```toml
 [[databases]]
 database_id = "your-database-id-here"
 name = "tasks"                # table prefix in SQLite: no spaces, lowercase

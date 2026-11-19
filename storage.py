@@ -104,6 +104,23 @@ CREATE TABLE IF NOT EXISTS "_backups" (
 )
 """
 
+_SCHEMA_CHANGES_TABLE = """
+CREATE TABLE IF NOT EXISTS "_schema_changes" (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name   TEXT NOT NULL,
+    property_id  TEXT,
+    kind         TEXT NOT NULL,
+    old_name     TEXT,
+    new_name     TEXT,
+    old_column   TEXT,
+    new_column   TEXT,
+    old_type     TEXT,
+    new_type     TEXT,
+    detail       TEXT,
+    detected_at  TEXT NOT NULL
+)
+"""
+
 _META_TABLE = """
 CREATE TABLE IF NOT EXISTS "_meta" (
     key   TEXT PRIMARY KEY,
@@ -124,6 +141,18 @@ CREATE TABLE IF NOT EXISTS "{table}_comments" (
 
 def _sqlite_type(value) -> str:
     return _TYPE_MAP.get(type(value), "TEXT")
+
+
+def physical_columns(col: str, prop_type: str | None) -> list[str]:
+    """
+    The {table}_pages columns one property writes, given its base column name.
+    Must stay in step with extractor.extract_page_row (a test compares the two).
+    """
+    if prop_type == "date":
+        return [f"{col}_start", f"{col}_end"]
+    if prop_type in ("select", "status", "multi_select"):
+        return [col, f"{col}_id"]
+    return [col]
 
 
 class Storage:
@@ -267,6 +296,50 @@ class Storage:
     def ensure_schema_table(self):
         self.conn.execute(_SCHEMA_TABLE)
         self.conn.commit()
+        try:
+            self.conn.execute(
+                'CREATE UNIQUE INDEX IF NOT EXISTS "idx_schema_column" ON "_schema" (table_name, column_name)'
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            logger.warning(
+                "_schema already has two properties on one column, so the unique index was not created; "
+                "run tools/check_db_invariants.py to list them"
+            )
+
+    def ensure_schema_changes_table(self):
+        self.conn.execute(_SCHEMA_CHANGES_TABLE)
+        self.conn.commit()
+
+    def _insert_schema_change(
+        self, table, kind, now, property_id=None, old_name=None, new_name=None,
+        old_column=None, new_column=None, old_type=None, new_type=None, detail=None,
+    ):
+        self.conn.execute(
+            'INSERT INTO "_schema_changes" (table_name, property_id, kind, old_name, new_name, old_column, '
+            "new_column, old_type, new_type, detail, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (table, property_id, kind, old_name, new_name, old_column, new_column, old_type, new_type, detail, now),
+        )
+
+    def log_schema_change(self, table: str, kind: str, now: str, **fields):
+        """Append one event to the _schema_changes ledger (property_added, property_renamed, type_changed, ...)."""
+        self._insert_schema_change(table, kind, now, **fields)
+        self.conn.commit()
+
+    def has_schema_change(self, table: str, property_id: str, kind: str) -> bool:
+        cur = self.conn.execute(
+            'SELECT 1 FROM "_schema_changes" WHERE table_name = ? AND property_id = ? AND kind = ? LIMIT 1',
+            (table, property_id, kind),
+        )
+        return cur.fetchone() is not None
+
+    def get_column_names(self, table: str) -> set[str]:
+        """Current columns of {table}_pages (empty when the table does not exist yet)."""
+        return self._fetch_col_names(f"{table}_pages")
+
+    def _table_exists(self, name: str) -> bool:
+        cur = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,))
+        return cur.fetchone() is not None
 
     def ensure_options_table(self):
         self.conn.execute(_OPTIONS_TABLE)
@@ -346,7 +419,7 @@ class Storage:
                     writer = csv.writer(f)
                     writer.writerow(rows[0].keys())
                     writer.writerows(rows)
-                logger.info(f"Exported {len(rows)} rows → {path}")
+                logger.info(f"Exported {len(rows)} rows -> {path}")
             except sqlite3.OperationalError:
                 pass  # table doesn't exist yet (e.g. comments disabled)
 
@@ -399,7 +472,7 @@ class Storage:
             pass  # changes table may not exist yet
 
         self.conn.commit()
-        logger.info(f"[{table}] Column rename applied: '{old_col}' → '{new_col}'")
+        logger.info(f"[{table}] Column rename applied: '{old_col}' -> '{new_col}'")
         return True
 
     # ------------------------------------------------------------------ #
@@ -508,7 +581,7 @@ class Storage:
         if table in self._known_cols:
             self._known_cols[table].discard(backup_column)
             self._known_cols[table].add(column_name)
-        logger.info(f"[{table}] Restored '{backup_column}' → '{column_name}'")
+        logger.info(f"[{table}] Restored '{backup_column}' -> '{column_name}'")
         return True
 
     def backfill_option_names(self, table: str) -> int:
@@ -551,35 +624,69 @@ class Storage:
         except sqlite3.OperationalError:
             return 0
 
-    def rename_column(self, table: str, old_col: str, new_col: str):
-        """Atomically rename a column in _pages and update field names in _changes."""
-        existing = self._fetch_col_names(f"{table}_pages")
-        if old_col not in existing:
+    def rename_property_columns(
+        self,
+        table: str,
+        old_col: str,
+        new_col: str,
+        prop_type: str | None,
+        now: str,
+        property_id: str | None = None,
+        kind: str = "column_renamed",
+        old_name: str | None = None,
+        new_name: str | None = None,
+        detail: str | None = None,
+    ):
+        """
+        Rename every physical column of one property (_start/_end for dates, _id for select types) and the
+        matching `field` values in {table}_changes, _backups and _schema, and log the event to _schema_changes,
+        all in ONE transaction. An interrupted run leaves nothing half done, and running it again after the
+        columns were already renamed still fixes the history. Raises ValueError, changing nothing, when a target
+        column already exists (the caller picks a free name first).
+        """
+        pairs = list(zip(physical_columns(old_col, prop_type), physical_columns(new_col, prop_type)))
+        if all(old == new for old, new in pairs):
             return
-        self.conn.execute(
-            f'ALTER TABLE "{table}_pages" RENAME COLUMN "{old_col}" TO "{new_col}"'
-        )
+        existing = self._fetch_col_names(f"{table}_pages")
+        for old, new in pairs:
+            if old != new and old in existing and new in existing:
+                raise ValueError(f"cannot rename {table}_pages.{old} to {new}: the column already exists")
+        has_changes = self._table_exists(f"{table}_changes")
+        has_backups = self._table_exists("_backups")
         self.conn.commit()
+        self.conn.execute("BEGIN")
         try:
-            self.conn.execute(
-                f'UPDATE "{table}_changes" SET field = ? WHERE field = ?',
-                (new_col, old_col),
+            for old, new in pairs:
+                if old == new:
+                    continue
+                if old in existing:
+                    self.conn.execute(f'ALTER TABLE "{table}_pages" RENAME COLUMN "{old}" TO "{new}"')
+                if has_changes:
+                    self.conn.execute(f'UPDATE "{table}_changes" SET field = ? WHERE field = ?', (new, old))
+            if has_backups:
+                self.conn.execute(
+                    'UPDATE "_backups" SET column_name = ? WHERE table_name = ? AND column_name = ?',
+                    (new_col, table, old_col),
+                )
+            if property_id is not None:
+                self.conn.execute(
+                    'UPDATE "_schema" SET column_name = ? WHERE table_name = ? AND property_id = ?',
+                    (new_col, table, property_id),
+                )
+            self._insert_schema_change(
+                table, kind, now, property_id=property_id, old_name=old_name, new_name=new_name,
+                old_column=old_col, new_column=new_col, old_type=prop_type, new_type=prop_type, detail=detail,
             )
             self.conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        except Exception:
+            self.conn.rollback()
+            raise
         if table in self._known_cols:
-            self._known_cols[table].discard(old_col)
-            self._known_cols[table].add(new_col)
-        try:
-            self.conn.execute(
-                'UPDATE "_backups" SET column_name = ? WHERE table_name = ? AND column_name = ?',
-                (new_col, table, old_col),
-            )
-            self.conn.commit()
-        except sqlite3.OperationalError:
-            pass
-        logger.info(f"[{table}] Column renamed: '{old_col}' → '{new_col}'")
+            for old, new in pairs:
+                if old in self._known_cols[table]:
+                    self._known_cols[table].discard(old)
+                    self._known_cols[table].add(new)
+        logger.info(f"[{table}] Column renamed: '{old_col}' -> '{new_col}'")
 
     def backup_column(self, table: str, col: str, date_str: str) -> str | None:
         """

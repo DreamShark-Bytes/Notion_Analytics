@@ -211,7 +211,7 @@ def migrate_changes_table(
                     if cur.rowcount:
                         print(
                             f"  [{table}] {changes_table}.{value_col}: "
-                            f"'{old_str}'→'{new_str}' for field='{col}' ({cur.rowcount} rows)"
+                            f"'{old_str}'->'{new_str}' for field='{col}' ({cur.rowcount} rows)"
                         )
     if not dry_run:
         conn.commit()

@@ -58,9 +58,12 @@ def extract_page_row(
     include_cols: list[str],
     exclude_cols: list[str],
     files_handling: str = "bool",
+    col_map: dict | None = None,
 ) -> dict:
     """
     Return a flat dict of {sanitized_col: value} for a Notion page.
+    `col_map` ({property name: column name}, from sync._compare_schema) overrides sanitize_col, so a property
+    keeps the column it was assigned (for example name_2 when name was taken).
 
     Always included: page_id, created_time, last_edited_time, url.
     include_cols / exclude_cols apply to Notion property names (original, not sanitized).
@@ -83,7 +86,7 @@ def extract_page_row(
         if is_ignored_property(prop_name, include_cols, exclude_cols):
             continue
 
-        col = sanitize_col(prop_name)
+        col = (col_map or {}).get(prop_name) or sanitize_col(prop_name)
         prop_value = page_props.get(prop_name, {})
 
         try:

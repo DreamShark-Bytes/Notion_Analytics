@@ -34,7 +34,8 @@ git clone https://github.com/DreamShark-Bytes/Notion_Analytics.git
 cd Notion_Analytics
 python -m venv venv
 venv/bin/python -m pip install -r requirements.txt        # Windows: venv\Scripts\python.exe -m pip
-cp config_example.toml config.toml              # add your Notion token and a database ID
+cp config_example.toml config.toml              # add a database ID
+# create config_secrets.toml next to it with one line: token = "ntn_..."
 venv/bin/python sync.py                         # Windows: venv\Scripts\python
 ```
 

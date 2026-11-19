@@ -1,8 +1,8 @@
 # Notion → Power BI Sync Configuration
 # Run: python sync.py
 
-# Your Notion integration token (Settings → Integrations → New integration)
-token = "ntn_your_token_here"
+# The Notion integration token does not go in this file: put it in config_secrets.toml
+# next to it. That file is git-ignored and holds one line: token = "ntn_your_token_here"
 
 # ── Database entries ──────────────────────────────────────────────────────────
 # Add one [[databases]] block per Notion database.

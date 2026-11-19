@@ -322,3 +322,28 @@ def test_existing_table_gains_delete_columns(storage):
 
 def test_ensure_deletion_columns_false_when_table_missing(storage):
     assert storage.ensure_deletion_columns("nope") is False
+
+
+# ── log volume ────────────────────────────────────────────────────────────────
+
+def test_many_marked_pages_log_ten_lines_and_one_summary(storage, caplog):
+    ids = [f"p{i:02d}" for i in range(25)]
+    _seed(storage, ids)
+    cfg = {**TASKS, "delete_guard_ratio": 0}
+    client = FakeClient(lookup={i: _trashed_page(i) for i in ids[1:]})
+    with caplog.at_level("INFO", logger="sync"):
+        result = _reconcile_deleted(client, cfg, storage, {"p00"}, [cfg], "t1", True)
+    assert result["marked"] == 24
+    page_lines = [m for m in caplog.messages if "Page p" in m]
+    assert len(page_lines) == 10
+    summary = [m for m in caplog.messages if "more page(s) changed delete state" in m]
+    assert len(summary) == 1 and "14 more" in summary[0]
+
+
+def test_few_marked_pages_log_each_and_no_summary(storage, caplog):
+    _seed(storage, ["p1", "p2", "p3"])
+    client = FakeClient(lookup={"p2": _trashed_page("p2"), "p3": _trashed_page("p3")})
+    with caplog.at_level("INFO", logger="sync"):
+        _reconcile_deleted(client, TASKS, storage, {"p1"}, [TASKS], "t1", True)
+    assert len([m for m in caplog.messages if "Page p" in m]) == 2
+    assert not any("more page(s)" in m for m in caplog.messages)

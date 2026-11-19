@@ -48,7 +48,7 @@ def export_table(con: duckdb.DuckDBPyConnection, schema: str, table: str, out_di
             f"COPY (SELECT * FROM {schema}.{table}) TO ? (FORMAT PARQUET)",
             [out_path],
         )
-        log.info(f"  {table} → {out_path}")
+        log.info(f"  {table} -> {out_path}")
         return True
     except Exception as e:
         log.warning(f"  {table}: skipped — {e}")
@@ -71,7 +71,7 @@ def main() -> int:
         con.close()
         return 1
 
-    log.info(f"Exporting {len(tables)} mart table(s) from '{DUCKDB_SCHEMA}' → {PARQUET_DIR}")
+    log.info(f"Exporting {len(tables)} mart table(s) from '{DUCKDB_SCHEMA}' -> {PARQUET_DIR}")
     ok = sum(export_table(con, DUCKDB_SCHEMA, t, PARQUET_DIR) for t in tables)
     con.close()
 
